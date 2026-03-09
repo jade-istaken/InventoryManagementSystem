@@ -9,4 +9,14 @@ namespace InventoryManagementSystem
         //this will be used for Users, Products, and anything else which eventually needs to be written to the DB
         //extensibility win!
     }
+
+    internal abstract class DBObjectCreator
+    {
+        public abstract IDatabaseObject FactoryMethod();
+        public void AddToDB()
+        {
+            var product = FactoryMethod();
+            product.AddToDB();
+        }
+    } 
 }
