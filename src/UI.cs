@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace InventoryManagementSystem
 {
-    class Program
+    class UI
     {
         static List<Product> products = new List<Product>();
         static List<User> users = new List<User>();
