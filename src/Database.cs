@@ -7,13 +7,27 @@ namespace InventoryManagementSystem
 {
     #region Entities
     
-    public class User
+    public abstract class User
     {
         public string UserName{ get; set;} = string.Empty;
         public string FirstName { get; set; } = string.Empty;
         public string LastName { get; set; } = string.Empty;
         public string HashedPass{ get; set; } = string.Empty;
-        public Privilege PrivilegeLevel{ get; set; }
+        public abstract bool CanModifyPrices();
+        public abstract bool CanViewFinancialReports();
+    }
+
+    //let's be real pretty much all inheritence counts as using the template pattern
+    public class Admin : User
+    {
+        public override bool CanModifyPrices() => true;
+        public override bool CanViewFinancialReports() => true;
+    }
+
+    public class Staff : User
+    {
+        public override bool CanModifyPrices() => false;
+        public override bool CanViewFinancialReports() => false;
     }
 
     public class Product
@@ -69,6 +83,7 @@ namespace InventoryManagementSystem
 
     #endregion
 
+    //the entire InventoryDbContext class is a facade for the many complex systems that go into an ORM. it makes it so much easier to interact with the database
     public class InventoryDbContext : DbContext
     {
         private readonly string _dbPath;
@@ -84,13 +99,16 @@ namespace InventoryManagementSystem
                 Directory.CreateDirectory(directory);
             }
         }
+        //these DbSet generics are examples ofg the iterator pattern, they're extremely useful for efficiently storing the results of queries
 
         public DbSet<User> Users { get; set; } = null!;
         public DbSet<Product> Products { get; set; } = null!;
         public DbSet<Order> Orders { get; set; } = null!;
         public DbSet<Sale> Sales { get; set; } = null!;
         public DbSet<Adjustment> Adjustments { get; set; } = null!;
-
+        
+        //the options builder and model builder are both examples of the builder pattern. 
+        //the modelbuilder uses it more but it shows how the builder pattern is really useful for making complex constructors
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
             optionsBuilder.UseSqlite($"Data Source={_dbPath}");
@@ -99,7 +117,10 @@ namespace InventoryManagementSystem
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // Users PK
-            modelBuilder.Entity<User>().HasKey(u => u.UserName);
+            modelBuilder.Entity<User>()
+                .HasDiscriminator<string>("PrivilegeLevel")
+                    .HasValue<Admin>("Admin")
+                    .HasValue<Staff>("Staff");
 
             // Products PK
             modelBuilder.Entity<Product>().HasKey(p => p.SKU);
