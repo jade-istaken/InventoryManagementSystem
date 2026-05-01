@@ -13,4 +13,8 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.5" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="InventoryManagementSystem.Tests/**/*.cs" />
+  </ItemGroup>
+
 </Project>

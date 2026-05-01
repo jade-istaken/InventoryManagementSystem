@@ -3,18 +3,21 @@ namespace InventoryManagementSystem
 {
     class Program
     {
-        static void Main()
+        static async Task Main()
         {
             string dbPath = "inventory.db";
-            
+        
             using var context = new InventoryDbContext(dbPath);
-            context.InitializeDatabase();
+            context.InitializeDatabase(); // Creates DB & schema if missing
 
-            Console.WriteLine($"Database initialized at: {Path.GetFullPath(dbPath)}");
-            
-            // Example: Check if a table exists by querying
-            int userCount = context.Users.Count();
-            Console.WriteLine($"Current user count: {userCount}");
+            var hasher = new BcryptHasher();
+            var userService = new UserService(context, hasher);
+
+            // Seed default admin if DB is brand new
+            await userService.EnsureDefaultAdminAsync("SecureAdmin@2026!");
+
+            // Continue with normal app flow...
+            Console.WriteLine("Inventory system ready.");
         }
     }
 }

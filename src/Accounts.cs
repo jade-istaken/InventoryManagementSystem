@@ -74,8 +74,8 @@ namespace InventoryManagementSystem
                 Console.WriteLine($"🔐 Default admin '{admin.UserName}' created. Change password on first login.");
             }
         }
-
-        // Strategy Pattern: Swappable hashing algorithm
+    }
+    // Strategy Pattern: Swappable hashing algorithm
         public class BcryptHasher : IPasswordHasher
         {
             private const int WorkFactor = 11;
@@ -90,5 +90,4 @@ namespace InventoryManagementSystem
                 return BCryptNet.Verify(plainText, hashed);
             }
         }
-    }
 }

@@ -87,7 +87,6 @@ namespace InventoryManagementSystem
     public class InventoryDbContext : DbContext
     {
         private readonly string _dbPath;
-
         public InventoryDbContext(string dbFilePath)
         {
             _dbPath = dbFilePath;
