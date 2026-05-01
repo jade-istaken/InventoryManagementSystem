@@ -1,5 +1,8 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.EntityFrameworkCore;
+using BCryptNet = BCrypt.Net.BCrypt;
+
 namespace InventoryManagementSystem
 {
     public enum UserRole {Admin, Staff}
@@ -59,6 +62,33 @@ namespace InventoryManagementSystem
         {
             var user = await GetUserAsync(userName);
             return user != null && _hasher.Verify(user.HashedPass, plainPass);
+        }
+
+        public async Task EnsureDefaultAdminAsync(string defaultPassword = "ChangeMe123!")
+        {
+            // Check if any users exist (async, non-blocking)
+            if (!await _context.Users.AnyAsync())
+            {
+                // Reuse existing Factory + Hashing logic
+                var admin = CreateUser(userName:"admin", firstName:"", lastName:"", plainPass:defaultPassword, role:UserRole.Admin);
+                Console.WriteLine($"🔐 Default admin '{admin.UserName}' created. Change password on first login.");
+            }
+        }
+
+        // Strategy Pattern: Swappable hashing algorithm
+        public class BcryptHasher : IPasswordHasher
+        {
+            private const int WorkFactor = 11;
+
+            public string Hash(string plainText)
+            {
+                return BCryptNet.HashPassword(plainText, WorkFactor);
+            }
+
+            public bool Verify(string hashed, string plainText)
+            {
+                return BCryptNet.Verify(plainText, hashed);
+            }
         }
     }
 }
