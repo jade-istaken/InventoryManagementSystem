@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inventory Management System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ========== LOGIN SCREEN ========== -->
+<div class="login-screen" id="loginScreen">
+    <div class="login-box">
+        <div class="login-logo">📦 INVENTRA</div>
+        <div class="login-subtitle">INVENTORY MGMT · COMP586</div>
+
+        <div class="login-error" id="loginError"></div>
+
+        <div class="login-field">
+            <label>Username</label>
+            <input type="text" id="loginUsername" placeholder="username" autocomplete="off">
+        </div>
+        <div class="login-field">
+            <label>Password</label>
+            <input type="password" id="loginPassword" placeholder="••••••••">
+        </div>
+
+        <button class="login-button" onclick="attemptLogin()">Log In</button>
+
+        <div class="login-hint">
+            Demo accounts:<br>
+            Admin → <code>admin</code> / <code>admin123</code><br>
+            Staff → <code>mobi</code> / <code>staff123</code>
+        </div>
+    </div>
+</div>
+
+<!-- ========== SIDEBAR ========== -->
+<aside class="sidebar">
+    <div class="sidebar-logo">
+        <div class="sidebar-logo-icon">
+            <svg width="20" height="20" fill="none" stroke="#D4820E" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+        </div>
+        <div>
+            <div class="sidebar-logo-title">INVENTRA</div>
+            <div class="sidebar-logo-subtitle">MGMT SYSTEM v2.0</div>
+        </div>
+    </div>
+
+    <button class="nav-button active" id="nav-dashboard" onclick="showPage('dashboard')">📊 Dashboard</button>
+    <button class="nav-button" id="nav-products" onclick="showPage('products')">📦 Products</button>
+    <button class="nav-button" id="nav-transactions" onclick="showPage('transactions')">💰 Transactions</button>
+    <button class="nav-button" id="nav-users" onclick="showPage('users')">👥 Accounts</button>
+
+    <div class="user-box">
+        <div class="user-box-name" id="loggedInName"></div>
+        <div class="user-box-role" id="loggedInRole"></div>
+        <button class="logout-button" onclick="logout()">🚪 Log Out</button>
+    </div>
+
+    <div class="sidebar-footer">
+        <div class="status-dot"></div>
+        <span>SYSTEM ONLINE</span>
+    </div>
+</aside>
+
+<!-- ========== MAIN CONTENT ========== -->
+<main class="main-content">
+
+    <!-- Dashboard Page -->
+    <div class="page active" id="page-dashboard">
+        <h1 class="page-title">Dashboard</h1>
+        <p class="page-subtitle">Real-time inventory overview</p>
+        <div class="stats-grid" id="dashboardStats"></div>
+        <div id="dashboardAlerts"></div>
+        <div style="margin-top:32px">
+            <h2 class="section-heading">Category Breakdown</h2>
+            <div class="category-grid" id="dashboardCategories"></div>
+        </div>
+    </div>
+
+    <!-- Products Page -->
+    <div class="page" id="page-products">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Products</h1>
+                <p class="page-subtitle" id="productCount"></p>
+            </div>
+            <button class="primary-button" onclick="openProductModal('add')">+ Add Product</button>
+        </div>
+        <div class="permission-notice" id="productNotice" style="display:none"></div>
+
+        <div class="toolbar">
+            <div class="search-box">
+                <span>🔍</span>
+                <input type="text" id="searchInput" placeholder="Search name, SKU, manufacturer…" oninput="renderProductTable()">
+            </div>
+            <div>
+                <button class="filter-button active" data-filter="All" onclick="setCategoryFilter('All')">All</button>
+                <button class="filter-button" data-filter="RawMaterial" onclick="setCategoryFilter('RawMaterial')">Raw</button>
+                <button class="filter-button" data-filter="Finished" onclick="setCategoryFilter('Finished')">Finished</button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="sortable" onclick="toggleSort('name')">Product<span id="sort-name"></span></th>
+                        <th>SKU</th>
+                        <th class="sortable" onclick="toggleSort('category')">Category<span id="sort-category"></span></th>
+                        <th class="sortable" onclick="toggleSort('manufacturer')">Manufacturer<span id="sort-manufacturer"></span></th>
+                        <th class="sortable" onclick="toggleSort('price')">Price<span id="sort-price"></span></th>
+                        <th class="sortable" onclick="toggleSort('quantity')">Qty<span id="sort-quantity"></span></th>
+                        <th>Reorder</th>
+                        <th>Status</th>
+                        <th style="text-align:right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="productTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Transactions Page -->
+    <div class="page" id="page-transactions">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Transactions</h1>
+                <p class="page-subtitle">Orders, sales, and price adjustments</p>
+            </div>
+        </div>
+        <div id="transactionsContent"></div>
+    </div>
+
+    <!-- Accounts Page -->
+    <div class="page" id="page-users">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Accounts</h1>
+                <p class="page-subtitle" id="userCount"></p>
+            </div>
+            <button class="primary-button" id="addUserButton" onclick="openUserModal('add')">+ Add User</button>
+        </div>
+        <div class="permission-notice" id="userNotice" style="display:none"></div>
+        <div class="user-grid" id="userGrid"></div>
+    </div>
+
+</main>
+
+<!-- ========== ACTIVITY LOG PANEL ========== -->
+<aside class="activity-panel" id="activityPanel">
+    <div class="activity-header">
+        <div class="activity-title">📋 Activity Log</div>
+        <button class="activity-toggle" onclick="toggleActivityLog()">✕</button>
+    </div>
+    <div class="activity-list" id="activityList"></div>
+</aside>
+<button class="log-toggle-button" id="logToggleButton" onclick="toggleActivityLog()">📋 Log</button>
+
+<!-- ========== PRODUCT MODAL ========== -->
+<div class="modal-overlay" id="productOverlay">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3 class="modal-title" id="productModalTitle">Add Product</h3>
+            <button class="modal-close" onclick="closeProductModal()">✕</button>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Name *</label>
+                <input class="form-input" id="inputName" placeholder="e.g. Steel Rod">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Category</label>
+                <select class="form-input" id="inputCategory">
+                    <option value="RawMaterial">Raw Material</option>
+                    <option value="Finished">Finished</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Price ($)</label>
+                <input class="form-input" id="inputPrice" type="number" step="0.01" min="0" placeholder="0.00">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Quantity</label>
+                <input class="form-input" id="inputQuantity" type="number" min="0" placeholder="0">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Reorder Level</label>
+                <input class="form-input" id="inputReorder" type="number" min="0" placeholder="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Manufacturer</label>
+                <input class="form-input" id="inputManufacturer" placeholder="Blank = SELF">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="cancel-button" onclick="closeProductModal()">Cancel</button>
+            <button class="primary-button" id="productSaveButton" onclick="saveProduct()">Add Product</button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== TRANSACTION MODAL (Order/Sale) ========== -->
+<div class="modal-overlay" id="transactionOverlay">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3 class="modal-title" id="transactionTitle">Record Transaction</h3>
+            <button class="modal-close" onclick="closeTransactionModal()">✕</button>
+        </div>
+        <div class="info-box">
+            <div class="info-box-title" id="transactionProductName"></div>
+            <div class="info-box-sub">SKU: <span id="transactionProductSku"></span></div>
+            <div class="info-box-stat">Current stock: <strong id="transactionCurrentStock"></strong></div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Amount *</label>
+                <input class="form-input" id="transactionAmount" type="number" min="1" placeholder="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label" id="transactionPriceLabel">Price Per Unit ($)</label>
+                <input class="form-input" id="transactionPrice" type="number" step="0.01" min="0">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="cancel-button" onclick="closeTransactionModal()">Cancel</button>
+            <button class="primary-button" id="transactionSaveButton" onclick="saveTransaction()">Record</button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== ADJUSTMENT MODAL (Price Change) ========== -->
+<div class="modal-overlay" id="adjustmentOverlay">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3 class="modal-title">Adjust Price</h3>
+            <button class="modal-close" onclick="closeAdjustmentModal()">✕</button>
+        </div>
+        <div class="info-box">
+            <div class="info-box-title" id="adjustmentProductName"></div>
+            <div class="info-box-stat">Current price: <strong id="adjustmentOldPrice"></strong></div>
+        </div>
+        <div class="form-row full">
+            <div class="form-group">
+                <label class="form-label">New Price ($) *</label>
+                <input class="form-input" id="adjustmentNewPrice" type="number" step="0.01" min="0" placeholder="0.00">
+            </div>
+        </div>
+        <div class="form-row full">
+            <div class="form-group">
+                <label class="form-label">Reason for Change *</label>
+                <input class="form-input" id="adjustmentReason" placeholder="e.g. Supplier cost increase">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="cancel-button" onclick="closeAdjustmentModal()">Cancel</button>
+            <button class="primary-button" onclick="saveAdjustment()">Save Adjustment</button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== USER MODAL ========== -->
+<div class="modal-overlay" id="userOverlay">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3 class="modal-title" id="userModalTitle">Add User</h3>
+            <button class="modal-close" onclick="closeUserModal()">✕</button>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Username *</label>
+                <input class="form-input" id="inputUsername" placeholder="e.g. jsmith">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Role</label>
+                <select class="form-input" id="inputRole">
+                    <option value="Admin">Admin</option>
+                    <option value="Staff">Staff</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">First Name *</label>
+                <input class="form-input" id="inputFirstName" placeholder="Jane">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Last Name *</label>
+                <input class="form-input" id="inputLastName" placeholder="Smith">
+            </div>
+        </div>
+        <div class="form-row full">
+            <div class="form-group">
+                <label class="form-label">Password (leave blank to keep existing)</label>
+                <input class="form-input" id="inputPassword" type="password" placeholder="••••••••">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="cancel-button" onclick="closeUserModal()">Cancel</button>
+            <button class="primary-button" id="userSaveButton" onclick="saveUser()">Create User</button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== CONFIRM DIALOG ========== -->
+<div class="modal-overlay" id="confirmOverlay">
+    <div class="modal-box" style="max-width:380px">
+        <p id="confirmMessage" style="color:var(--text-bright);font-size:15px;margin-bottom:22px;line-height:1.5"></p>
+        <div style="display:flex;justify-content:flex-end;gap:10px">
+            <button class="cancel-button" onclick="closeConfirm()">Cancel</button>
+            <button class="primary-button danger" onclick="executeConfirm()">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== TOAST ========== -->
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
