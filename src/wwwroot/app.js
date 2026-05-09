@@ -88,32 +88,34 @@ async function loadInitialData() {
 
         if (loggedInUser?.role === "Admin") {
             try {
-                console.log("Loading transactions for admin...");
+                console.log("Loading admin data...");
                 
-                // Fetch in parallel with timeout protection
-                const [ordersData, salesData, adjustmentsData] = await Promise.all([
+                // Fetch orders, sales, adjustments, and users in parallel
+                const [ordersData, salesData, adjustmentsData, usersData] = await Promise.all([
                     apiRequest("/orders").catch(e => { console.warn("Orders failed:", e); return []; }),
                     apiRequest("/sales").catch(e => { console.warn("Sales failed:", e); return []; }),
-                    apiRequest("/adjustments").catch(e => { console.warn("Adjustments failed:", e); return []; })
+                    apiRequest("/adjustments").catch(e => { console.warn("Adjustments failed:", e); return []; }),
+                    apiRequest("/users").catch(e => { console.warn("Users failed:", e); return []; })  // ← ADD THIS
                 ]);
                 
                 orders = Array.isArray(ordersData) ? ordersData : [];
                 sales = Array.isArray(salesData) ? salesData : [];
                 adjustments = Array.isArray(adjustmentsData) ? adjustmentsData : [];
+                users = Array.isArray(usersData) ? usersData : [];
                 
-                console.log(`Loaded ${orders.length} orders, ${sales.length} sales, ${adjustments.length} adjustments`);
+                console.log(`Loaded ${users.length} users from backend`);
                 
-                // Only re-render if on transactions page
-                if (currentPage === "transactions") {
-                    renderTransactionsPage();
-                }
+                // Re-render pages if visible
+                if (currentPage === "transactions") renderTransactionsPage();
+                if (currentPage === "users") renderUserCards();
                 
             } catch (e) {
                 // Non-fatal: log but don't crash the app
                 console.warn("Transaction load failed (non-fatal):", e);
                 orders = [];
                 sales = [];
-                adjustments = [];  
+                adjustments = []; 
+                users = [];
             }
         }
         
@@ -947,7 +949,8 @@ function closeUserModal() {
     document.getElementById("userOverlay").classList.remove("visible");
 }
 
-function saveUser() {
+
+async function saveUser() {
     var userName = document.getElementById("inputUsername").value.trim().toLowerCase();
     var firstName = document.getElementById("inputFirstName").value.trim();
     var lastName = document.getElementById("inputLastName").value.trim();
@@ -955,40 +958,96 @@ function saveUser() {
     var role = document.getElementById("inputRole").value;
 
     if (!userName || !firstName || !lastName) { alert("Please fill in username, first name, and last name."); return; }
-    if (editingUserIndex === null && !password) { alert("Please set a password for new users."); return; }
-
-    if (editingUserIndex === null) {
-        for (var i = 0; i < users.length; i++) {
-            if (users[i].userName === userName) { alert("That username is already taken."); return; }
+    
+    try {
+        if (editingUserIndex === null) {
+            // CREATE: POST new user
+            if (!password) { alert("Please set a password for new users."); return; }
+            
+            const created = await apiRequest("/users", {
+                method: "POST",
+                body: JSON.stringify({
+                    userName: userName,
+                    firstName: firstName,
+                    lastName: lastName,
+                    password: password,
+                    role: role
+                })
+            });
+            
+            // Update local cache after successful API call
+            users.push(created);
+            showToast("Created @" + userName);
+            logActivity('created user @' + userName + ' (' + role + ')');
+            
+        } else {
+            // UPDATE: PUT existing user
+            const updatePayload = {
+                firstName: firstName,
+                lastName: lastName,
+                role: role
+            };
+            // Only include password if user entered one (optional update)
+            if (password) updatePayload.password = password;
+            
+            const updated = await apiRequest(`/users/${encodeURIComponent(userName)}`, {
+                method: "PUT",
+                body: JSON.stringify(updatePayload)
+            });
+            
+            // Update local cache
+            users[editingUserIndex] = updated;
+            showToast("Updated @" + userName);
+            logActivity('updated user @' + userName);
         }
-        users.push({ userName: userName, firstName: firstName, lastName: lastName, password: password, role: role });
-        showToast("Created @" + userName);
-        logActivity('created user @' + userName + ' (' + role + ')');
-    } else {
-        var u = users[editingUserIndex];
-        u.firstName = firstName;
-        u.lastName = lastName;
-        u.role = role;
-        if (password) u.password = password;
-        showToast("Updated @" + u.userName);
-        logActivity('updated user @' + u.userName);
+        
+        closeUserModal();
+        renderUserCards();
+        
+    } catch (err) {
+        console.error("User save failed:", err);
+        // Show user-friendly error messages
+        const errMsg = err.message.includes("already exists") 
+            ? "That username is already taken" 
+            : err.message.includes("Password is required")
+            ? "Password required for new users"
+            : err.message.includes("cannot change your own role")
+            ? "You cannot change your own role"
+            : "Failed to save user: " + err.message;
+        showToast(errMsg);
     }
-
-    closeUserModal();
-    renderUserCards();
 }
 
 function confirmDeleteUser(index) {
     if (!canManageUsers()) return;
-    if (users[index].userName === loggedInUser.userName) { alert("You cannot delete your own account."); return; }
+    if (users[index].userName === loggedInUser.userName) { 
+        alert("You cannot delete your own account."); 
+        return; 
+    }
 
     document.getElementById("confirmMessage").textContent = "Remove user @" + users[index].userName + "?";
     var userName = users[index].userName;
-    pendingDeleteAction = function() {
-        showToast("Removed @" + userName);
-        logActivity('removed user @' + userName);
-        users.splice(index, 1);
-        renderUserCards();
+    
+    // Store async API call in pendingDeleteAction
+    pendingDeleteAction = async function() {
+        try {
+            await apiRequest(`/users/${encodeURIComponent(userName)}`, {
+                method: "DELETE"
+            });
+            
+            // Only update local state after successful API call
+            users.splice(index, 1);
+            showToast("Removed @" + userName);
+            logActivity('removed user @' + userName);
+            renderUserCards();
+            
+        } catch (err) {
+            console.error("Delete user failed:", err);
+            const errMsg = err.message.includes("cannot delete your own")
+                ? "You cannot delete your own account"
+                : "Failed to delete user: " + err.message;
+            showToast(errMsg);
+        }
     };
     document.getElementById("confirmOverlay").classList.add("visible");
 }

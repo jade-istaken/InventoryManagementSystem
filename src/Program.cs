@@ -616,6 +616,179 @@ namespace InventoryManagementSystem
                 return Results.Ok(allActivity);
             });
 
+            //User APIs
+            app.MapGet("/api/users", async (InventoryDbContext db, HttpContext http) =>
+            {
+                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                if (requestingUser == null) return Results.Unauthorized();
+                if (requestingUser is not Admin) return Results.Forbid();
+                
+                var users = await db.Users
+                    .Select(u => new {
+                        userName = u.UserName,
+                        firstName = u.FirstName,
+                        lastName = u.LastName,
+                        role = u is Admin ? "Admin" : "Staff"
+                    })
+                    .ToListAsync();
+                
+                return Results.Ok(users);
+            });
+
+            app.MapPost("/api/users", async (
+                UserCreateDto dto, 
+                IUserService userService, 
+                IPasswordHasher passwordHasher,
+                InventoryDbContext db, 
+                HttpContext http) =>
+            {
+                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                if (requestingUser == null) return Results.Unauthorized();
+                if (requestingUser is not Admin) return Results.Forbid();
+                
+                // Validate input
+                if (string.IsNullOrWhiteSpace(dto.UserName) || 
+                    string.IsNullOrWhiteSpace(dto.FirstName) || 
+                    string.IsNullOrWhiteSpace(dto.LastName))
+                    return Results.BadRequest(new { error = "Username, first name, and last name are required" });
+                
+                if (string.IsNullOrWhiteSpace(dto.Password))
+                    return Results.BadRequest(new { error = "Password is required for new users" });
+                
+                // Check if username already exists (case-insensitive)
+                var existing = await db.Users.FindAsync(dto.UserName.ToLower());
+                if (existing != null)
+                    return Results.Conflict(new { error = "Username already exists" });
+                
+                // Hash password using your existing hasher
+                var passwordHash = passwordHasher.Hash(dto.Password);
+                
+                // Create user entity
+                User newUser;
+                if (dto.Role == "Admin")
+                {
+                    newUser = new Admin
+                    {
+                        UserName = dto.UserName.ToLower(),
+                        FirstName = dto.FirstName.Trim(),
+                        LastName = dto.LastName.Trim(),
+                        HashedPass = passwordHash
+                    };
+                }
+                else
+                {
+                    newUser = new Staff
+                    {
+                        UserName = dto.UserName.ToLower(),
+                        FirstName = dto.FirstName.Trim(),
+                        LastName = dto.LastName.Trim(),
+                        HashedPass = passwordHash
+                    };
+                }
+                
+                db.Users.Add(newUser);
+                await db.SaveChangesAsync();
+                
+                Console.WriteLine($"👤 User created: {newUser.UserName} ({dto.Role})");
+                return Results.Created($"/api/users/{newUser.UserName}", MapUserToDto(newUser));
+            });
+
+            app.MapPut("/api/users/{userName}", async (
+                string userName, 
+                UserUpdateDto dto, 
+                IPasswordHasher passwordHasher,
+                InventoryDbContext db, 
+                HttpContext http) =>
+            {
+                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                if (requestingUser == null) return Results.Unauthorized();
+                if (requestingUser is not Admin) return Results.Forbid();
+                
+                // Cannot change your own role or delete yourself via update
+                if (userName.ToLower() == requestingUser.UserName.ToLower() && dto.Role != null)
+                    return Results.BadRequest(new { error = "You cannot change your own role" });
+                
+                var user = await db.Users.FindAsync(userName);
+                if (user == null) return Results.NotFound();
+                
+                // Update basic fields
+                if (!string.IsNullOrWhiteSpace(dto.FirstName))
+                    user.FirstName = dto.FirstName.Trim();
+                if (!string.IsNullOrWhiteSpace(dto.LastName))
+                    user.LastName = dto.LastName.Trim();
+                
+                // Hash new password if provided
+                if (!string.IsNullOrWhiteSpace(dto.Password))
+                {
+                    user.HashedPass = passwordHasher.Hash(dto.Password);
+                }
+                
+                // Handle role change (Staff ↔ Admin) - requires entity type change
+                if (!string.IsNullOrWhiteSpace(dto.Role) && dto.Role != (user is Admin ? "Admin" : "Staff"))
+                {
+                    var oldRole = user is Admin ? "Admin" : "Staff";
+                    var oldHash = user.HashedPass;
+                    var oldFirst = user.FirstName;
+                    var oldLast = user.LastName;
+                    var oldUser = userName;
+                    
+                    // Remove old entity
+                    db.Users.Remove(user);
+                    await db.SaveChangesAsync();
+                    
+                    // Create new entity with correct type
+                    if (dto.Role == "Admin")
+                    {
+                        user = new Admin
+                        {
+                            UserName = oldUser,
+                            FirstName = oldFirst,
+                            LastName = oldLast,
+                            HashedPass = oldHash
+                        };
+                    }
+                    else
+                    {
+                        user = new Staff
+                        {
+                            UserName = oldUser,
+                            FirstName = oldFirst,
+                            LastName = oldLast,
+                            HashedPass = oldHash
+                        };
+                    }
+                    db.Users.Add(user);
+                    Console.WriteLine($"👤 User role changed: {userName} {oldRole} → {dto.Role}");
+                }
+                
+                await db.SaveChangesAsync();
+                return Results.Ok(MapUserToDto(user));
+            });
+
+            // DELETE /api/users/{userName} - Delete user (Admin only)
+            app.MapDelete("/api/users/{userName}", async (
+                string userName, 
+                InventoryDbContext db, 
+                HttpContext http) =>
+            {
+                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                if (requestingUser == null) return Results.Unauthorized();
+                if (requestingUser is not Admin) return Results.Forbid();
+                
+                // Cannot delete yourself
+                if (userName.ToLower() == requestingUser.UserName.ToLower())
+                    return Results.BadRequest(new { error = "You cannot delete your own account" });
+                
+                var user = await db.Users.FindAsync(userName);
+                if (user == null) return Results.NotFound();
+                
+                db.Users.Remove(user);
+                await db.SaveChangesAsync();
+                
+                Console.WriteLine($"👤 User deleted: {userName}");
+                return Results.NoContent();
+            });
+
             // Authentication API
             app.MapPost("/api/auth/login", async (LoginDto credentials, IUserService userService, HttpContext http) =>
             {
@@ -779,38 +952,13 @@ namespace InventoryManagementSystem
                 adj.User?.FirstName ?? "",
                 adj.User?.LastName ?? ""
             );
+
+            UserDto MapUserToDto(User user) => new(
+                user.UserName,
+                user.FirstName,
+                user.LastName,
+                user is Admin ? "Admin" : "Staff"
+            );
         }
     }
-
-    // DTOS
-    public record OrderCreateDto(string SKU, int Amount, decimal Cost);
-    public record OrderUpdateDto(string SKU, int Amount, decimal Cost);
-    public record SaleCreateDto(string SKU, int Amount, decimal Income);
-    public record SaleUpdateDto(string SKU, int Amount, decimal Income);
-    public record LoginDto(string UserName, string Password);
-    public record LoginRequest(string UserName, string Password);
-    public record AdjustmentCreateDto(string SKU, decimal NewPrice, string Reason);
-    public record AdjustmentDto(
-    int AdjustmentID, 
-    string SKU, 
-    string UserName, 
-    decimal OldPrice, 
-    decimal NewPrice, 
-    string Reason,
-    DateTime CreatedAt,
-    string ProductName,
-    string UserFirstName,
-    string UserLastName);
-
-    public record ActivityItem(
-        string Type,              // "order", "sale", or "adjustment"
-        int Id,                   // OrderID, SaleID, or AdjustmentID
-        string SKU,
-        string ProductName,
-        string UserName,
-        string UserDisplayName,   // "FirstName LastName" or fallback to UserName
-        decimal Amount,           // Quantity for orders/sales; price delta for adjustments
-        decimal Value,            // Cost/Income/NewPrice depending on type
-        DateTime Timestamp,       // CreatedAt from database
-        string Reason);
 }
