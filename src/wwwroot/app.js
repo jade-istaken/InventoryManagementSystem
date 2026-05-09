@@ -91,15 +91,17 @@ async function loadInitialData() {
                 console.log("Loading transactions for admin...");
                 
                 // Fetch in parallel with timeout protection
-                const [ordersData, salesData] = await Promise.all([
+                const [ordersData, salesData, adjustmentsData] = await Promise.all([
                     apiRequest("/orders").catch(e => { console.warn("Orders failed:", e); return []; }),
-                    apiRequest("/sales").catch(e => { console.warn("Sales failed:", e); return []; })
+                    apiRequest("/sales").catch(e => { console.warn("Sales failed:", e); return []; }),
+                    apiRequest("/adjustments").catch(e => { console.warn("Adjustments failed:", e); return []; })
                 ]);
                 
                 orders = Array.isArray(ordersData) ? ordersData : [];
                 sales = Array.isArray(salesData) ? salesData : [];
+                adjustments = Array.isArray(adjustmentsData) ? adjustmentsData : [];
                 
-                console.log(`Loaded ${orders.length} orders, ${sales.length} sales`);
+                console.log(`Loaded ${orders.length} orders, ${sales.length} sales, ${adjustments.length} adjustments`);
                 
                 // Only re-render if on transactions page
                 if (currentPage === "transactions") {
@@ -111,6 +113,7 @@ async function loadInitialData() {
                 console.warn("Transaction load failed (non-fatal):", e);
                 orders = [];
                 sales = [];
+                adjustments = [];  
             }
         }
         
