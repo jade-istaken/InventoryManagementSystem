@@ -39,6 +39,7 @@ namespace InventoryManagementSystem
         public int Quantity { get; set; }
         public int ReorderLevel { get; set; }
         public decimal Price { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 
     public class Order
@@ -48,6 +49,7 @@ namespace InventoryManagementSystem
         public string UserName { get; set; } = string.Empty;
         public int Amount { get; set; }
         public decimal Cost { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Navigation properties
         public Product Product { get; set; } = null!;
@@ -61,6 +63,7 @@ namespace InventoryManagementSystem
         public string UserName { get; set; } = string.Empty;
         public int Amount { get; set; }
         public decimal Income { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Navigation properties
         public Product Product { get; set; } = null!;
@@ -75,6 +78,7 @@ namespace InventoryManagementSystem
         public decimal OldPrice { get; set; }
         public decimal NewPrice { get; set; }
         public string Reason { get; set; } = string.Empty;
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Navigation properties
         public Product Product { get; set; } = null!;
