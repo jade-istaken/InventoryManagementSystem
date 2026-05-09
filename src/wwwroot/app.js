@@ -236,7 +236,7 @@ async function attemptLogin() {
         // Update UI
         document.getElementById("loginScreen").classList.add("hidden");
         document.getElementById("appUI").classList.remove("hidden");
-        document.getElementById("loggedInUser").textContent = `@${loggedInUser.userName}`;
+        document.getElementById("loggedInName").textContent = `@${loggedInUser.userName}`;
         document.getElementById("loggedInRole").textContent = loggedInUser.role?.toUpperCase() || "UNKNOWN";
 
         // Load app data AFTER token is confirmed stored
@@ -486,13 +486,13 @@ async function saveProduct() {
     if (!name) { alert("Please enter a product name."); return; }
 
     var product = {
-        sku: editingProductIndex === null ? makeSKU() : products[editingProductIndex].sku,
-        name: name,
-        category: document.getElementById("inputCategory").value,
-        price: parseFloat(document.getElementById("inputPrice").value) || 0,
-        quantity: parseInt(document.getElementById("inputQuantity").value) || 0,
-        reorderLevel: parseInt(document.getElementById("inputReorder").value) || 0,
-        manufacturer: document.getElementById("inputManufacturer").value.trim() || "SELF"
+        SKU: editingProductIndex === null ? makeSKU() : products[editingProductIndex].sku,
+        Name: name,
+        Category: document.getElementById("inputCategory").value,
+        Price: parseFloat(document.getElementById("inputPrice").value) || 0,
+        Quantity: parseInt(document.getElementById("inputQuantity").value) || 0,
+        ReorderLevel: parseInt(document.getElementById("inputReorder").value) || 0,
+        Manufacturer: document.getElementById("inputManufacturer").value.trim() || "SELF"
     };
 
     try {
