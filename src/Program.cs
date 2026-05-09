@@ -21,7 +21,7 @@ namespace InventoryManagementSystem
                 Args = args,
                 WebRootPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")
             });
-            builder.WebHost.UseUrls("http://localhost:5000"); // ← Explicit port
+            builder.WebHost.UseUrls("http://localhost:5000"); //  Explicit port
 
             // === SERVICES ===
             var dbPath = Path.Combine(AppContext.BaseDirectory, "inventory.db");
@@ -31,7 +31,7 @@ namespace InventoryManagementSystem
             
             builder.Services.AddScoped<IUserService, UserService>();
             builder.Services.AddScoped<IPasswordHasher, BcryptHasher>();         
-            builder.Services.AddControllers(); // ← Enable API controllers
+            builder.Services.AddControllers(); //  Enable API controllers
             builder.Services.AddCors(options =>
                 options.AddDefaultPolicy(policy =>
                     policy.WithOrigins(
@@ -41,21 +41,29 @@ namespace InventoryManagementSystem
                         "http://127.0.0.1:5000"
                         )
                           .AllowAnyMethod()
-                          .AllowAnyHeader())); // ← Allow frontend origin
+                          .AllowAnyHeader())); //  Allow frontend origin
 
             builder.Services.AddAuthentication("Bearer")
                 .AddJwtBearer("Bearer", options =>
                 {
-                    options.TokenValidationParameters = new TokenValidationParameters
-                    {
-                        ValidateIssuerSigningKey = true,
-                        IssuerSigningKey = new SymmetricSecurityKey(
-                            Encoding.ASCII.GetBytes(JwtHelper.SecretKey)),
-                        ValidateIssuer = false,
-                        ValidateAudience = false,
-                        NameClaimType = ClaimTypes.Name,
-                        RoleClaimType = ClaimTypes.Role
-                    };
+                    var validationKey = new SymmetricSecurityKey(
+                    Encoding.ASCII.GetBytes(JwtHelper.SecretKey))
+                {
+                    KeyId = "MVP-Symmetric-Key-2026"  // MUST MATCH JwtHelper exactly
+                };
+
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = validationKey,  //  Use the key with KeyId
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
+                    NameClaimType = ClaimTypes.Name,
+                    RoleClaimType = ClaimTypes.Role,
+                    ValidateLifetime = false,          // Skip expiration for MVP
+                    ClockSkew = TimeSpan.FromMinutes(5),
+                    RequireSignedTokens = true         // Keep validation, but KeyId fixes the issue
+                };
                 });
             builder.Services.AddAuthorization();
 
@@ -243,8 +251,7 @@ namespace InventoryManagementSystem
                 await db.SaveChangesAsync();
                 
                 return Results.Ok(MapOrderToDto(order));
-            })
-            ;
+            });
 
             // DELETE /api/orders/{id} - Delete order (Admin only)
             app.MapDelete("/api/orders/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
@@ -269,8 +276,7 @@ namespace InventoryManagementSystem
                 await db.SaveChangesAsync();
                 
                 return Results.NoContent();
-            })
-            ;
+            });
 
             // GET /api/orders/user/{userName} - Get orders by user
             app.MapGet("/api/orders/user/{userName}", async (string userName, InventoryDbContext db, HttpContext http) =>
@@ -289,8 +295,7 @@ namespace InventoryManagementSystem
                     .ToListAsync();
                 
                 return Results.Ok(orders.Select(MapOrderToDto));
-            })
-            ;
+            });
 
             //Sales API
 
@@ -306,8 +311,7 @@ namespace InventoryManagementSystem
                     .Include(s => s.User)
                     .ToListAsync();
                 return Results.Ok(sales.Select(MapSaleToDto));
-            })
-            ;
+            });
 
             // GET /api/sales/{id} - Get single sale
             app.MapGet("/api/sales/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
@@ -326,8 +330,7 @@ namespace InventoryManagementSystem
                     return Results.Forbid();
                 
                 return Results.Ok(MapSaleToDto(sale));
-            })
-            ;
+            });
 
             // POST /api/sales - Create a new sale (Admin or Staff)
             app.MapPost("/api/sales", async (SaleCreateDto dto, InventoryDbContext db, HttpContext http) =>
@@ -370,8 +373,7 @@ namespace InventoryManagementSystem
                 await db.SaveChangesAsync();
                 
                 return Results.Created($"/api/sales/{sale.SaleID}", MapSaleToDto(sale));
-            })
-            ;
+            });
 
             // PUT /api/sales/{id} - Update sale (Admin only)
             app.MapPut("/api/sales/{id:int}", async (int id, SaleUpdateDto dto, InventoryDbContext db, HttpContext http) =>
@@ -402,8 +404,7 @@ namespace InventoryManagementSystem
                 
                 await db.SaveChangesAsync();
                 return Results.Ok(MapSaleToDto(sale));
-            })
-            ;
+            });
 
             // DELETE /api/sales/{id} - Delete sale (Admin only)
             app.MapDelete("/api/sales/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
@@ -426,8 +427,7 @@ namespace InventoryManagementSystem
                 db.Sales.Remove(sale);
                 await db.SaveChangesAsync();
                 return Results.NoContent();
-            })
-            ;
+            });
 
             // GET /api/sales/user/{userName} - Get sales by user
             app.MapGet("/api/sales/user/{userName}", async (string userName, InventoryDbContext db, HttpContext http) =>
@@ -445,9 +445,94 @@ namespace InventoryManagementSystem
                     .Where(s => s.UserName == userName)
                     .ToListAsync();
                 return Results.Ok(sales.Select(MapSaleToDto));
-            })
-            ;
+            });
 
+            // Adjustments API
+            app.MapGet("/api/adjustments", async (InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();
+                
+                var adjustments = await db.Adjustments
+                    .Include(a => a.Product)
+                    .Include(a => a.User)
+                    .OrderByDescending(a => a.AdjustmentID)
+                    .ToListAsync();
+                
+                return Results.Ok(adjustments.Select(MapAdjustmentToDto));
+            });
+
+            // POST /api/adjustments - Record a price adjustment (Admin only)
+            app.MapPost("/api/adjustments", async (AdjustmentCreateDto dto, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();  // Price changes = admin-only
+                
+                // Validate product exists
+                var product = await db.Products.FindAsync(dto.SKU);
+                if (product == null)
+                    return Results.BadRequest(new { error = "Product not found" });
+                
+                // Validate input
+                if (dto.NewPrice < 0)
+                    return Results.BadRequest(new { error = "Price cannot be negative" });
+                if (string.IsNullOrWhiteSpace(dto.Reason))
+                    return Results.BadRequest(new { error = "Reason is required" });
+                
+                // Create adjustment record
+                var adjustment = new Adjustment
+                {
+                    SKU = dto.SKU,
+                    UserName = user.UserName,
+                    OldPrice = product.Price,      // Capture price BEFORE change
+                    NewPrice = dto.NewPrice,
+                    Reason = dto.Reason.Trim()
+                };
+                
+                //Update the product's actual price
+                product.Price = dto.NewPrice;
+                
+                db.Adjustments.Add(adjustment);
+                await db.SaveChangesAsync();
+                
+                Console.WriteLine($"rice adjustment: {product.Name} ${product.Price} → ${dto.NewPrice} ({dto.Reason})");
+                return Results.Created($"/api/adjustments/{adjustment.AdjustmentID}", MapAdjustmentToDto(adjustment));
+            });
+
+            // GET /api/adjustments/product/{sku} - Get adjustments for a specific product
+            app.MapGet("/api/adjustments/product/{sku}", async (string sku, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                
+                var adjustments = await db.Adjustments
+                    .Include(a => a.Product)
+                    .Include(a => a.User)
+                    .Where(a => a.SKU == sku)
+                    .OrderByDescending(a => a.AdjustmentID)
+                    .ToListAsync();
+                
+                return Results.Ok(adjustments.Select(MapAdjustmentToDto));
+            });
+
+            // DELETE /api/adjustments/{id} - Delete an adjustment record (Admin only)
+            // Note: Does NOT revert the product price - adjustments are audit trail
+            app.MapDelete("/api/adjustments/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();
+                
+                var adjustment = await db.Adjustments.FindAsync(id);
+                if (adjustment == null) return Results.NotFound();
+                
+                db.Adjustments.Remove(adjustment);
+                await db.SaveChangesAsync();
+                
+                return Results.NoContent();
+            });
 
             // Authentication API
             app.MapPost("/api/auth/login", async (LoginDto credentials, IUserService userService, HttpContext http) =>
@@ -597,6 +682,18 @@ namespace InventoryManagementSystem
                 UserFirstName = sale.User?.FirstName,
                 UserLastName = sale.User?.LastName
             };
+
+            AdjustmentDto MapAdjustmentToDto(Adjustment adj) => new(
+                adj.AdjustmentID,
+                adj.SKU,
+                adj.UserName,
+                adj.OldPrice,
+                adj.NewPrice,
+                adj.Reason,
+                adj.Product?.Name ?? "",
+                adj.User?.FirstName ?? "",
+                adj.User?.LastName ?? ""
+            );
         }
     }
 
@@ -607,4 +704,15 @@ namespace InventoryManagementSystem
     public record SaleUpdateDto(string SKU, int Amount, decimal Income);
     public record LoginDto(string UserName, string Password);
     public record LoginRequest(string UserName, string Password);
+    public record AdjustmentCreateDto(string SKU, decimal NewPrice, string Reason);
+    public record AdjustmentDto(
+    int AdjustmentID, 
+    string SKU, 
+    string UserName, 
+    decimal OldPrice, 
+    decimal NewPrice, 
+    string Reason,
+    string ProductName,
+    string UserFirstName,
+    string UserLastName);
 }
