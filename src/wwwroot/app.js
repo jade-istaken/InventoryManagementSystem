@@ -173,9 +173,14 @@ async function attemptLogin() {
         });
         
         // Success: store user + token (for MVP, userData contains role directly)
-        loggedInUser = userData;
-        // authToken = userData.token; // Uncomment when using JWT
-        localStorage.setItem("authToken", authToken || "demo"); // MVP placeholder
+        loggedInUser = {
+            role: userData.role,
+            userName: userData.userName,
+            firstName: userData.firstName,
+            lastName: userData.lastName
+        };
+        authToken = userData.token; 
+        localStorage.setItem("authToken", authToken); 
         
         errorBox.classList.remove("visible");
         document.getElementById("loginScreen").classList.add("hidden");

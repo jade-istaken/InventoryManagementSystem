@@ -263,7 +263,14 @@ namespace InventoryManagementSystem
                     if (user != null)
                     {
                         var token = JwtHelper.GenerateToken(user);
-                        return Results.Ok(new { token, user = new { user.UserName, user.FirstName, user.LastName, Role = user is Admin ? "Admin" : "Staff" } });
+                        return Results.Ok(new 
+                        { 
+                            token = token,
+                            role = user is Admin ? "Admin" : "Staff",
+                            userName = user.UserName,                   
+                            firstName = user.FirstName,                 
+                            lastName = user.LastName                    
+                        });
                     }
                 }
                 return Results.Unauthorized();
