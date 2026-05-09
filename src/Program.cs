@@ -34,7 +34,12 @@ namespace InventoryManagementSystem
             builder.Services.AddControllers(); // ← Enable API controllers
             builder.Services.AddCors(options =>
                 options.AddDefaultPolicy(policy =>
-                    policy.WithOrigins("http://localhost:3000", "http://127.0.0.1:3000")
+                    policy.WithOrigins(
+                        "http://localhost:3000", 
+                        "http://127.0.0.1:3000",
+                        "http://localhost:5000",
+                        "http://127.0.0.1:5000"
+                        )
                           .AllowAnyMethod()
                           .AllowAnyHeader())); // ← Allow frontend origin
 
@@ -57,12 +62,15 @@ namespace InventoryManagementSystem
             builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
             {
                 options.SerializerOptions.PropertyNameCaseInsensitive = true;
+                options.SerializerOptions.Converters.Add(
+                    new System.Text.Json.Serialization.JsonStringEnumConverter());
             });
             builder.Services.AddControllers()
-            .AddJsonOptions(options =>
-            {
-                options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-            });
+                .AddJsonOptions(options =>
+                {
+                    options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+                    options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+                });
 
             var app = builder.Build();
 
@@ -84,9 +92,30 @@ namespace InventoryManagementSystem
             
             app.MapPost("/api/products", async (InventoryDbContext db, Product product) =>
             {
-                db.Products.Add(product);
-                await db.SaveChangesAsync();
-                return Results.Created($"/api/products/{product.SKU}", product);
+                try
+                {
+                    Console.WriteLine($"Creating product: SKU={product.SKU}, Name={product.Name}, Category={product.Category}");
+        
+                    // Check for duplicate SKU before adding
+                    var existing = await db.Products.FindAsync(product.SKU);
+                    if (existing != null)
+                    {
+                        Console.WriteLine($" Duplicate SKU: {product.SKU}");
+                        return Results.BadRequest(new { error = "SKU already exists" });
+                    }
+                    db.Products.Add(product);
+                    await db.SaveChangesAsync();
+
+                    Console.WriteLine($"Product created: {product.SKU}");
+                    return Results.Created($"/api/products/{product.SKU}", product);
+                }
+                    catch (Exception ex)
+                {
+                    Console.WriteLine($"Product creation failed: {ex.GetType().Name} - {ex.Message}");
+                    Console.WriteLine($"   Stack: {ex.StackTrace}");
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+
             }); // ← Only authenticated users
 
             app.MapPut("/api/products/{sku}", async (InventoryDbContext db, string sku, Product updates) =>
