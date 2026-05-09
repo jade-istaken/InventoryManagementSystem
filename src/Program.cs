@@ -211,7 +211,8 @@ namespace InventoryManagementSystem
                     SKU = dto.SKU,
                     UserName = user.UserName,
                     Amount = dto.Amount,
-                    Cost = dto.Cost
+                    Cost = dto.Cost,
+                    CreatedAt = DateTime.UtcNow
                 };
 
                 //update the inventory status
@@ -363,7 +364,8 @@ namespace InventoryManagementSystem
                     SKU = dto.SKU,
                     UserName = user.UserName,
                     Amount = dto.Amount,
-                    Income = dto.Income
+                    Income = dto.Income,
+                    CreatedAt = DateTime.UtcNow 
                 };
                 
                 // Decrease inventory
@@ -488,7 +490,8 @@ namespace InventoryManagementSystem
                     UserName = user.UserName,
                     OldPrice = product.Price,      // Capture price BEFORE change
                     NewPrice = dto.NewPrice,
-                    Reason = dto.Reason.Trim()
+                    Reason = dto.Reason.Trim(),
+                    CreatedAt = DateTime.UtcNow 
                 };
                 
                 //Update the product's actual price
@@ -532,6 +535,85 @@ namespace InventoryManagementSystem
                 await db.SaveChangesAsync();
                 
                 return Results.NoContent();
+            });
+
+            //Activity Feed
+            app.MapGet("/api/activity", async (
+                InventoryDbContext db, 
+                HttpContext http, 
+                int limit = 50,
+                string? type = null) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                
+                // MVP: Only Admins can view full activity feed
+                if (user is not Admin) return Results.Forbid();
+                
+                    Console.WriteLine($"Fetching activity: limit={limit}, type={type ?? "all"}");
+    
+                // Initialize result lists
+                var recentOrders = new List<Order>();
+                var recentSales = new List<Sale>();
+                var recentAdjustments = new List<Adjustment>();
+                
+                // Fetch only the requested type(s) to save DB calls
+                if (string.IsNullOrWhiteSpace(type) || type.Equals("order", StringComparison.OrdinalIgnoreCase))
+                {
+                    recentOrders = await db.Orders
+                        .Include(o => o.Product).Include(o => o.User)
+                        .OrderByDescending(o => o.CreatedAt)
+                        .Take(limit)
+                        .ToListAsync();
+                }
+                
+                if (string.IsNullOrWhiteSpace(type) || type.Equals("sale", StringComparison.OrdinalIgnoreCase))
+                {
+                    recentSales = await db.Sales
+                        .Include(s => s.Product).Include(s => s.User)
+                        .OrderByDescending(s => s.CreatedAt)
+                        .Take(limit)
+                        .ToListAsync();
+                }
+                
+                if (string.IsNullOrWhiteSpace(type) || type.Equals("adjustment", StringComparison.OrdinalIgnoreCase))
+                {
+                    recentAdjustments = await db.Adjustments
+                        .Include(a => a.Product).Include(a => a.User)
+                        .OrderByDescending(a => a.CreatedAt)
+                        .Take(limit)
+                        .ToListAsync();
+                }
+                
+                // Map to unified ActivityItem format
+                var orderItems = recentOrders.Select(o => new ActivityItem(
+                    "order", o.OrderID, o.SKU, o.Product?.Name ?? "", o.UserName,
+                    string.IsNullOrWhiteSpace(o.User?.FirstName) ? o.UserName : $"{o.User.FirstName} {o.User.LastName}".Trim(),
+                    o.Amount, o.Cost, o.CreatedAt, ""
+                ));
+                
+                var saleItems = recentSales.Select(s => new ActivityItem(
+                    "sale", s.SaleID, s.SKU, s.Product?.Name ?? "", s.UserName,
+                    string.IsNullOrWhiteSpace(s.User?.FirstName) ? s.UserName : $"{s.User.FirstName} {s.User.LastName}".Trim(),
+                    s.Amount, s.Income, s.CreatedAt, ""
+                ));
+                
+                var adjustmentItems = recentAdjustments.Select(a => new ActivityItem(
+                    "adjustment", a.AdjustmentID, a.SKU, a.Product?.Name ?? "", a.UserName,
+                    string.IsNullOrWhiteSpace(a.User?.FirstName) ? a.UserName : $"{a.User.FirstName} {a.User.LastName}".Trim(),
+                    a.NewPrice - a.OldPrice, a.NewPrice, a.CreatedAt, a.Reason ?? ""
+                ));
+                
+                // Merge all sources, sort by timestamp (true chronological order), apply final limit
+                var allActivity = orderItems
+                    .Concat(saleItems)
+                    .Concat(adjustmentItems)
+                    .OrderByDescending(a => a.Timestamp)
+                    .Take(limit)
+                    .ToList();
+                
+                Console.WriteLine($"✅ Returned {allActivity.Count} activity items");
+                return Results.Ok(allActivity);
             });
 
             // Authentication API
@@ -666,6 +748,7 @@ namespace InventoryManagementSystem
                 order.UserName,
                 order.Amount,
                 order.Cost,
+                createdAt = order.CreatedAt,
                 ProductName = order.Product?.Name,
                 UserFirstName = order.User?.FirstName,
                 UserLastName = order.User?.LastName
@@ -678,6 +761,7 @@ namespace InventoryManagementSystem
                 userName = sale.UserName,
                 amount = sale.Amount,
                 income = sale.Income,
+                createdAt = sale.CreatedAt,
                 ProductName = sale.Product?.Name,
                 UserFirstName = sale.User?.FirstName,
                 UserLastName = sale.User?.LastName
@@ -690,6 +774,7 @@ namespace InventoryManagementSystem
                 adj.OldPrice,
                 adj.NewPrice,
                 adj.Reason,
+                adj.CreatedAt, 
                 adj.Product?.Name ?? "",
                 adj.User?.FirstName ?? "",
                 adj.User?.LastName ?? ""
@@ -712,7 +797,20 @@ namespace InventoryManagementSystem
     decimal OldPrice, 
     decimal NewPrice, 
     string Reason,
+    DateTime CreatedAt,
     string ProductName,
     string UserFirstName,
     string UserLastName);
+
+    public record ActivityItem(
+        string Type,              // "order", "sale", or "adjustment"
+        int Id,                   // OrderID, SaleID, or AdjustmentID
+        string SKU,
+        string ProductName,
+        string UserName,
+        string UserDisplayName,   // "FirstName LastName" or fallback to UserName
+        decimal Amount,           // Quantity for orders/sales; price delta for adjustments
+        decimal Value,            // Cost/Income/NewPrice depending on type
+        DateTime Timestamp,       // CreatedAt from database
+        string Reason);
 }

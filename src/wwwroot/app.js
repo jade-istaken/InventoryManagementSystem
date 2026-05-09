@@ -161,33 +161,115 @@ function canManageUsers() {
 // ============================================================
 //  ACTIVITY LOG
 // ============================================================
+
 function logActivity(actionText) {
     var who = loggedInUser ? loggedInUser.userName : "system";
     activityLog.unshift({ action: actionText, user: who, time: timeNow() });
     if (activityLog.length > 50) activityLog.pop();
-    renderActivityLog();
+    renderLocalActivityLog();
+    loadActivityLog(20);
+}
+//replace the fake one with an actual real function
+async function loadActivityLog(limit = 20) {
+    try {
+        // Fetch from /api/activity endpoint (camelCase JSON)
+        const activity = await apiRequest(`/activity?limit=${limit}`);
+        
+        // Render the database-backed items
+        renderActivityLog(activity);
+        
+        console.log(`Loaded ${activity?.length || 0} activity items from backend`);
+    } catch (err) {
+        console.warn("Could not load activity log:", err);
+        // Fallback: show empty state
+        renderActivityLog([]);
+    }
 }
 
-function renderActivityLog() {
-    var list = document.getElementById("activityList");
-    if (!activityLog.length) {
-        list.innerHTML = '<div class="activity-empty">No activity yet</div>';
+function renderActivityLog(items) {
+    const list = document.getElementById("activityList");
+    if (!list) return;
+    
+    // Handle empty state
+    if (!items || !Array.isArray(items) || items.length === 0) {
+        list.innerHTML = '<div class="activity-empty">No recent activity</div>';
         return;
     }
-    var html = "";
-    for (var i = 0; i < activityLog.length; i++) {
-        var entry = activityLog[i];
-        html += '<div class="activity-entry">';
-        html += '<div class="activity-action"><span class="activity-username">@' + escapeHTML(entry.user) + '</span> ' + escapeHTML(entry.action) + '</div>';
-        html += '<div class="activity-time">' + entry.time + '</div>';
-        html += '</div>';
-    }
+    
+    // Build HTML for each activity item
+    const html = items.map(item => {
+        // ✅ Use camelCase properties from JSON API:
+        const type = item.type;           // "order", "sale", or "adjustment"
+        const product = item.productName || item.sku || "(unknown)";
+        const user = item.userDisplayName || item.userName || "system";
+        const timestamp = item.timestamp ? new Date(item.timestamp) : new Date();
+        
+        // Format time for display
+        const timeStr = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        // Build action text based on type
+        let actionText = "";
+        if (type === "order") {
+            actionText = `ordered <strong>${item.amount}x</strong> ${escapeHTML(product)} for ${formatMoney(item.value)}`;
+        } else if (type === "sale") {
+            actionText = `sold <strong>${item.amount}x</strong> ${escapeHTML(product)} for ${formatMoney(item.value)}`;
+        } else if (type === "adjustment") {
+            const newP = item.value?.toFixed(2) || "0.00";
+            const delta = item.amount || 0;
+            const oldP = (item.value - delta).toFixed(2);
+            const deltaSign = delta >= 0 ? "+" : "";
+            
+            actionText = `adjusted ${escapeHTML(product)} price: $${oldP} → $${newP} (${deltaSign}$${Math.abs(delta).toFixed(2)})`;
+            if (item.reason) actionText += ` <em>(${escapeHTML(item.reason)})</em>`;
+        }
+        
+        // Return HTML for this entry
+        return `
+            <div class="activity-entry" data-type="${type}" data-id="${item.id}">
+                <div class="activity-action">
+                    <span class="activity-username">@${escapeHTML(user)}</span> 
+                    ${actionText}
+                </div>
+                <div class="activity-time" title="${timestamp.toLocaleDateString()}">${timeStr}</div>
+            </div>
+        `;
+    }).join("");
+    
     list.innerHTML = html;
+}
+function renderLocalActivityLog() {
+    // const list = document.getElementById("activityList");
+    // if (!list) return;
+    
+    // if (!activityLog || !activityLog.length) {
+    //     list.innerHTML = '<div class="activity-empty">No activity yet</div>';
+    //     return;
+    // }
+    
+    // const html = activityLog.map(entry => `
+    //     <div class="activity-entry">
+    //         <div class="activity-action">
+    //             <span class="activity-username">@${escapeHTML(entry.user)}</span> 
+    //             ${escapeHTML(entry.action)}
+    //         </div>
+    //         <div class="activity-time">${entry.time}</div>
+    //     </div>
+    // `).join("");
+    
+    // list.innerHTML = html;
 }
 
 function toggleActivityLog() {
-    document.getElementById("activityPanel").classList.toggle("collapsed");
-    document.getElementById("logToggleButton").classList.toggle("visible");
+    const panel = document.getElementById("activityPanel");
+    const toggleBtn = document.getElementById("logToggleButton");
+    
+    // Toggle visibility classes
+    panel.classList.toggle("collapsed");
+    toggleBtn.classList.toggle("visible");
+    
+    if (!panel.classList.contains("collapsed")) {
+        loadActivityLog(20);  // Load 20 most recent items
+    }
 }
 
 
@@ -244,6 +326,9 @@ async function attemptLogin() {
 
         // Load app data AFTER token is confirmed stored
         await loadInitialData();
+        if (loggedInUser?.role === "Admin") {
+            await loadActivityLog(20);
+        }
         showToast(`Welcome, ${loggedInUser.firstName}!`);
         
     } catch (err) {
@@ -666,21 +751,53 @@ function closeAdjustmentModal() {
     document.getElementById("adjustmentOverlay").classList.remove("visible");
 }
 
-function saveAdjustment() {
+async function saveAdjustment() {
     var newPrice = parseFloat(document.getElementById("adjustmentNewPrice").value);
     var reason = document.getElementById("adjustmentReason").value.trim();
+    
     if (isNaN(newPrice) || newPrice < 0) { alert("Please enter a valid new price."); return; }
     if (!reason) { alert("Please provide a reason for the price change."); return; }
 
     var p = products[adjustmentProductIndex];
     var oldPrice = p.price;
-    adjustments.push({ adjustmentId: nextAdjustmentId++, sku: p.sku, userName: loggedInUser.userName, oldPrice: oldPrice, newPrice: newPrice, reason: reason });
-    p.price = newPrice;
-
-    showToast("Price adjusted for " + p.name);
-    logActivity('adjusted "' + p.name + '" from ' + formatMoney(oldPrice) + ' to ' + formatMoney(newPrice));
-    closeAdjustmentModal();
-    renderProductTable();
+    
+    try {
+        // POST to backend /api/adjustments
+        const newAdjustment = await apiRequest("/adjustments", {
+            method: "POST",
+            body: JSON.stringify({
+                SKU: p.sku,
+                NewPrice: newPrice,
+                Reason: reason
+            })
+        });
+        
+        adjustments.push(newAdjustment);
+        
+        // Update product price in local cache for immediate UI feedback
+        p.price = newPrice;
+        
+        showToast("Price adjusted for " + p.name);
+        logActivity('adjusted "' + p.name + '" from ' + formatMoney(oldPrice) + ' to ' + formatMoney(newPrice) + ' (' + reason + ')');
+        
+        closeAdjustmentModal();
+        renderProductTable();
+        
+        // Refresh transactions page if visible to show new adjustment
+        if (currentPage === "transactions") {
+            renderTransactionsPage();
+        }
+        
+        // Refresh activity log if panel is open
+        const activityPanel = document.getElementById("activityPanel");
+        if (activityPanel && !activityPanel.classList.contains("collapsed")) {
+            loadActivityLog(20);
+        }
+        
+    } catch (err) {
+        console.error("Adjustment failed:", err);
+        showToast("Failed to record adjustment: " + err.message);
+    }
 }
 
 
