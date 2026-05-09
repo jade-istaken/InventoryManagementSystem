@@ -1,8 +1,6 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
-using BCryptNet = BCrypt.Net.BCrypt;
-
 namespace InventoryManagementSystem
 {
     public enum UserRole {Admin, Staff}
@@ -11,7 +9,7 @@ namespace InventoryManagementSystem
     public interface IPasswordHasher
     {
         string Hash(string plainText);
-        bool Verify(string hashed, string plainText);
+        bool Verify(string plainText, string hashed);
     }
 
     //this service is gonna act as a facade for having to interact with the EFCore part
@@ -83,12 +81,18 @@ namespace InventoryManagementSystem
 
             public string Hash(string plainText)
             {
-                return BCryptNet.HashPassword(plainText, WorkFactor);
+                return BCrypt.Net.BCrypt.EnhancedHashPassword(plainText, WorkFactor);
             }
 
-            public bool Verify(string hashed, string plainText)
+            public bool Verify(string password, string hash)
             {
-                return BCryptNet.Verify(plainText, hashed);
+                if (string.IsNullOrEmpty(password) || string.IsNullOrEmpty(hash))
+                return false;
+            
+                // Trim whitespace/null chars from SQLite/EF
+                var cleanHash = hash.Trim('\0', ' ', '\t', '\r', '\n');
+                
+                return BCrypt.Net.BCrypt.EnhancedVerify(password, cleanHash);
             }
         }
 }

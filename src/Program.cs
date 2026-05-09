@@ -93,7 +93,7 @@ namespace InventoryManagementSystem
                 if (user is null || !hasher.Verify(request.Password, user.HashedPass))
                     return Results.Unauthorized();
                 
-                // ⚠️ For production: use JWT token generation here
+                // For production: use JWT token generation here
                 // For MVP: return user object with role (insecure but functional for coupling demo)
                 return Results.Ok(new { 
                     userName = user.UserName, 
@@ -101,6 +101,31 @@ namespace InventoryManagementSystem
                     lastName = user.LastName, 
                     role = user is Admin ? "Admin" : user is Staff ? "Staff" : "Unknown"
                 });
+            });
+
+            // Temporary debug endpoint in Program.cs
+            app.MapPost("/api/test-bcrypt", (IPasswordHasher hasher) =>
+            {
+                const string pwd = "Test123!";
+                try 
+                {
+                    var hash = hasher.Hash(pwd);
+                    var valid = hasher.Verify(pwd, hash);
+                    var invalid = hasher.Verify("Wrong", hash);
+                    
+                    return Results.Json(new {
+                        hash = hash,
+                        length = hash?.Length,
+                        prefix = hash?.Substring(0, 4),
+                        verifyCorrect = valid,
+                        verifyWrong = !invalid,
+                        success = valid && !invalid && hash?.Length == 60
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Results.Problem($"Error: {ex.GetType().Name} - {ex.Message}");
+                }
             });
 
             // === FALLBACK: Serve SPA for client-side routing ===
@@ -114,10 +139,23 @@ namespace InventoryManagementSystem
                 
                 var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
                 await userService.EnsureDefaultAdminAsync("SecureAdmin@2026!");
+                
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var context = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+                var admin = await context.Users.FirstOrDefaultAsync(u => u.UserName == "admin");
+                
+                if (admin != null)
+                {
+                    Console.WriteLine($"🔍 Admin PasswordHash length: {admin.HashedPass?.Length ?? 0}");
+                    Console.WriteLine($"🔍 Admin PasswordHash preview: {admin.HashedPass?.Substring(0, Math.Min(30, admin.HashedPass.Length))}...");
+                    Console.WriteLine($"🔍 Expected bcrypt prefix: $2a$, $2b$, or $2y$");
+                }
             }
 
-            Console.WriteLine("🚀 API running at http://localhost:5000");
-            Console.WriteLine("🌐 Frontend served at http://localhost:5000/");
+            Console.WriteLine("API running at http://localhost:5000");
+            Console.WriteLine("Frontend served at http://localhost:5000/");
             app.Run(); // ← Keep server alive!
         }
     }

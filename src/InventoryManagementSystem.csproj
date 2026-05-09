@@ -14,8 +14,4 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="InventoryManagementSystem.Tests/**/*.cs" />
-  </ItemGroup>
-
 </Project>

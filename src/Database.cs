@@ -110,6 +110,12 @@ namespace InventoryManagementSystem
                 .Property(u => u.UserName)
                     .IsRequired()
                     .HasMaxLength(50);
+            
+            modelBuilder.Entity<User>()
+                .Property(u => u.HashedPass)
+                .IsRequired()
+                .HasMaxLength(60) 
+                .IsUnicode(false);
 
             // Products PK
             modelBuilder.Entity<Product>()
