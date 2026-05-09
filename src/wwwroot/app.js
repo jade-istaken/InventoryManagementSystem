@@ -3,26 +3,41 @@ let authToken = localStorage.getItem("authToken"); // Persist login
 
 async function apiRequest(endpoint, options = {}) {
     const token = localStorage.getItem("authToken");
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-        ...options,
-        headers: {
-            "Content-Type": "application/json",
-            ...(token && { "Authorization": `Bearer ${token}` }),
-            ...options.headers
-        }
+    if (!token) {
+        console.warn("apiRequest: No authToken found in localStorage");
+    }
+    const headers = {
+        "Content-Type": "application/json",
+        ...(token && { "Authorization": `Bearer ${token}` })
+    };
+    console.log(`→ ${options.method || "GET"} ${API_BASE}${endpoint}`, {
+        hasAuth: !!token,
+        authPrefix: token ? `Bearer ${token.substring(0, 10)}...` : "none"
     });
-    
-    if (response.status === 401) {
-        logout(); // Auto-logout on auth failure
-        throw new Error("Unauthorized");
+    try {
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            ...options,
+            headers: { ...headers, ...options.headers }
+        });
+        
+        // Log response status for debugging
+        console.log(`← ${response.status} ${response.statusText}`);
+        
+        if (response.status === 401) {
+            console.error("401 Unauthorized - token may be invalid or expired");
+        }
+        
+        const data = await response.json().catch(() => null);
+        
+        if (!response.ok) {
+            throw new Error(`API Error: ${response.status} - ${data?.message || response.statusText}`);
+        }
+        
+        return data;
+    } catch (err) {
+        console.error(`Request failed for ${endpoint}:`, err);
+        throw err;
     }
-    
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`API Error: ${response.status} - ${error}`);
-    }
-    
-    return response.json();
 }
 
 // ============================================================
@@ -70,6 +85,34 @@ async function loadInitialData() {
         products = await apiRequest("/products");
         renderProductTable();
         renderDashboard();
+
+        if (loggedInUser?.role === "Admin") {
+            try {
+                console.log("Loading transactions for admin...");
+                
+                // Fetch in parallel with timeout protection
+                const [ordersData, salesData] = await Promise.all([
+                    apiRequest("/orders").catch(e => { console.warn("Orders failed:", e); return []; }),
+                    apiRequest("/sales").catch(e => { console.warn("Sales failed:", e); return []; })
+                ]);
+                
+                orders = Array.isArray(ordersData) ? ordersData : [];
+                sales = Array.isArray(salesData) ? salesData : [];
+                
+                console.log(`Loaded ${orders.length} orders, ${sales.length} sales`);
+                
+                // Only re-render if on transactions page
+                if (currentPage === "transactions") {
+                    renderTransactionsPage();
+                }
+                
+            } catch (e) {
+                // Non-fatal: log but don't crash the app
+                console.warn("Transaction load failed (non-fatal):", e);
+                orders = [];
+                sales = [];
+            }
+        }
         
     } catch (err) {
         console.error("Failed to load data:", err);
@@ -171,26 +214,34 @@ async function attemptLogin() {
             method: "POST",
             body: JSON.stringify({ userName: username, password: password })
         });
+        console.log("Login response:", userData);
         
         // Success: store user + token (for MVP, userData contains role directly)
+        authToken = userData.token;
+        if (!authToken) {
+            throw new Error("No token received from server");
+        }
+
         loggedInUser = {
             role: userData.role,
             userName: userData.userName,
             firstName: userData.firstName,
             lastName: userData.lastName
         };
-        authToken = userData.token; 
-        localStorage.setItem("authToken", authToken); 
-        
-        errorBox.classList.remove("visible");
+
+        // Store token with explicit check
+        localStorage.setItem("authToken", authToken);
+        console.log("Token stored:", authToken.substring(0, 20) + "...");
+
+        // Update UI
         document.getElementById("loginScreen").classList.add("hidden");
-        document.getElementById("loggedInName").textContent = userData.firstName + " " + userData.lastName;
-        document.getElementById("loggedInRole").textContent = userData.role.toUpperCase() + " · @" + userData.userName;
-        document.getElementById("loginPassword").value = "";
-        
-        logActivity("logged in");
-        showPage("dashboard");
-        loadInitialData(); // Refresh data after login
+        document.getElementById("appUI").classList.remove("hidden");
+        document.getElementById("loggedInUser").textContent = `@${loggedInUser.userName}`;
+        document.getElementById("loggedInRole").textContent = loggedInUser.role?.toUpperCase() || "UNKNOWN";
+
+        // Load app data AFTER token is confirmed stored
+        await loadInitialData();
+        showToast(`Welcome, ${loggedInUser.firstName}!`);
         
     } catch (err) {
         errorBox.textContent = "Invalid credentials or server error";
@@ -530,32 +581,67 @@ function closeTransactionModal() {
     document.getElementById("transactionOverlay").classList.remove("visible");
 }
 
-function saveTransaction() {
-    var amount = parseInt(document.getElementById("transactionAmount").value);
-    var price = parseFloat(document.getElementById("transactionPrice").value);
-
-    if (!amount || amount <= 0) { alert("Please enter a valid amount."); return; }
-    if (isNaN(price) || price < 0) { alert("Please enter a valid price."); return; }
-
-    var p = products[transactionProductIndex];
-    var total = amount * price;
-
+// REPLACE the entire saveTransaction() function with this async version:
+async function saveTransaction() {
+  var amount = parseInt(document.getElementById("transactionAmount").value);
+  var price = parseFloat(document.getElementById("transactionPrice").value);
+  
+  if (!amount || amount <= 0) { alert("Please enter a valid amount."); return; }
+  if (isNaN(price) || price < 0) { alert("Please enter a valid price."); return; }
+  
+  var p = products[transactionProductIndex];
+  var total = amount * price;
+  
+  try {
     if (transactionType === "order") {
-        orders.push({ orderId: nextOrderId++, sku: p.sku, userName: loggedInUser.userName, amount: amount, cost: total });
-        p.quantity += amount;
-        showToast("Recorded order: +" + amount + " units");
-        logActivity('ordered +' + amount + ' units of "' + p.name + '" (' + formatMoney(total) + ')');
+      //POST to backend /api/orders
+      const newOrder = await apiRequest("/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          SKU: p.sku,
+          Amount: amount,
+          Cost: total
+        })
+      });
+      
+      orders.push(newOrder);
+      p.quantity += amount; // Keep local product in sync
+      
+      showToast("Recorded order: +" + amount + " units");
+      logActivity('ordered +' + amount + ' units of "' + p.name + '" (' + formatMoney(total) + ')');
+      
     } else {
-        if (amount > p.quantity) { alert("Cannot sell more than current stock (" + p.quantity + ")."); return; }
-        sales.push({ orderId: nextSaleId++, sku: p.sku, userName: loggedInUser.userName, amount: amount, income: total });
-        p.quantity -= amount;
-        showToast("Recorded sale: -" + amount + " units");
-        logActivity('sold ' + amount + ' units of "' + p.name + '" (' + formatMoney(total) + ')');
+      if (amount > p.quantity) {
+        alert("Cannot sell more than current stock (" + p.quantity + ").");
+        return;
+      }
+      
+      //POST to backend /api/sales
+      const newSale = await apiRequest("/sales", {
+        method: "POST",
+        body: JSON.stringify({
+          SKU: p.sku,
+          Amount: amount,
+          Income: total
+        })
+      });
+      
+      sales.push(newSale);
+      p.quantity -= amount; // Keep local product in sync
+      
+      showToast("Recorded sale: -" + amount + " units");
+      logActivity('sold ' + amount + ' units of "' + p.name + '" (' + formatMoney(total) + ')');
     }
-
+    
     closeTransactionModal();
     renderProductTable();
     if (currentPage === "dashboard") renderDashboard();
+    if (currentPage === "transactions") renderTransactionsPage(); // Refresh ledger
+    
+  } catch (err) {
+    console.error("Transaction failed:", err);
+    showToast("Failed to record " + transactionType + ": " + err.message);
+  }
 }
 
 

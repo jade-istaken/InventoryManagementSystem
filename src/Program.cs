@@ -253,6 +253,162 @@ namespace InventoryManagementSystem
             })
             .RequireAuthorization();
 
+            //Sales API
+
+            // GET /api/sales - List all sales (Admin only)
+            app.MapGet("/api/sales", async (InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();
+                
+                var sales = await db.Sales
+                    .Include(s => s.Product)
+                    .Include(s => s.User)
+                    .ToListAsync();
+                return Results.Ok(sales.Select(MapSaleToDto));
+            })
+            .RequireAuthorization();
+
+            // GET /api/sales/{id} - Get single sale
+            app.MapGet("/api/sales/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                
+                var sale = await db.Sales
+                    .Include(s => s.Product)
+                    .Include(s => s.User)
+                    .FirstOrDefaultAsync(s => s.SaleID == id);
+                if (sale == null) return Results.NotFound();
+                
+                // Staff can only view their own sales
+                if (user is not Admin && sale.UserName != user.UserName)
+                    return Results.Forbid();
+                
+                return Results.Ok(MapSaleToDto(sale));
+            })
+            .RequireAuthorization();
+
+            // POST /api/sales - Create a new sale (Admin or Staff)
+            app.MapPost("/api/sales", async (SaleCreateDto dto, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                
+                // Validate product exists
+                var product = await db.Products.FindAsync(dto.SKU);
+                if (product == null)
+                    return Results.BadRequest(new { error = "Product not found" });
+                
+                // Validate input
+                if (dto.Amount <= 0)
+                    return Results.BadRequest(new { error = "Amount must be positive" });
+                if (dto.Income < 0)
+                    return Results.BadRequest(new { error = "Income cannot be negative" });
+                
+                // Check sufficient stock for sale
+                if (product.Quantity < dto.Amount)
+                    return Results.BadRequest(new { 
+                        error = "Insufficient stock", 
+                        available = product.Quantity, 
+                        requested = dto.Amount 
+                    });
+                
+                // Create sale record
+                var sale = new Sale
+                {
+                    SKU = dto.SKU,
+                    UserName = user.UserName,
+                    Amount = dto.Amount,
+                    Income = dto.Income
+                };
+                
+                // Decrease inventory
+                product.Quantity -= dto.Amount;
+                
+                db.Sales.Add(sale);
+                await db.SaveChangesAsync();
+                
+                return Results.Created($"/api/sales/{sale.SaleID}", MapSaleToDto(sale));
+            })
+            .RequireAuthorization();
+
+            // PUT /api/sales/{id} - Update sale (Admin only)
+            app.MapPut("/api/sales/{id:int}", async (int id, SaleUpdateDto dto, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();
+                
+                var sale = await db.Sales
+                    .Include(s => s.Product)
+                    .FirstOrDefaultAsync(s => s.SaleID == id);
+                if (sale == null) return Results.NotFound();
+                
+                // Calculate inventory adjustment if amount changed
+                if (sale.Amount != dto.Amount && sale.Product != null)
+                {
+                    var quantityDiff = sale.Amount - dto.Amount; // Reverse of order logic
+                    sale.Product.Quantity += quantityDiff; // Restore difference
+                    
+                    // Validate new amount doesn't exceed stock
+                    if (sale.Product.Quantity < 0)
+                        return Results.BadRequest(new { error = "Update would result in negative inventory" });
+                }
+                
+                sale.SKU = dto.SKU;
+                sale.Amount = dto.Amount;
+                sale.Income = dto.Income;
+                
+                await db.SaveChangesAsync();
+                return Results.Ok(MapSaleToDto(sale));
+            })
+            .RequireAuthorization();
+
+            // DELETE /api/sales/{id} - Delete sale (Admin only)
+            app.MapDelete("/api/sales/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();
+                
+                var sale = await db.Sales
+                    .Include(s => s.Product)
+                    .FirstOrDefaultAsync(s => s.SaleID == id);
+                if (sale == null) return Results.NotFound();
+                
+                // Restore inventory when deleting sale
+                if (sale.Product != null)
+                {
+                    sale.Product.Quantity += sale.Amount; // Return sold items to stock
+                }
+                
+                db.Sales.Remove(sale);
+                await db.SaveChangesAsync();
+                return Results.NoContent();
+            })
+            .RequireAuthorization();
+
+            // GET /api/sales/user/{userName} - Get sales by user
+            app.MapGet("/api/sales/user/{userName}", async (string userName, InventoryDbContext db, HttpContext http) =>
+            {
+                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                if (requestingUser == null) return Results.Unauthorized();
+                
+                // Users can only view their own sales unless admin
+                if (requestingUser is not Admin && requestingUser.UserName != userName)
+                    return Results.Forbid();
+                
+                var sales = await db.Sales
+                    .Include(s => s.Product)
+                    .Include(s => s.User)
+                    .Where(s => s.UserName == userName)
+                    .ToListAsync();
+                return Results.Ok(sales.Select(MapSaleToDto));
+            })
+            .RequireAuthorization();
+
 
             // Authentication API
             app.MapPost("/api/auth/login", async (LoginDto credentials, IUserService userService, HttpContext http) =>
@@ -353,12 +509,25 @@ namespace InventoryManagementSystem
                 UserLastName = order.User?.LastName
             };
 
+            object MapSaleToDto(Sale sale) => new
+            {
+                orderId = sale.SaleID,
+                sku = sale.SKU,
+                userName = sale.UserName,
+                amount = sale.Amount,
+                income = sale.Income,
+                ProductName = sale.Product?.Name,
+                UserFirstName = sale.User?.FirstName,
+                UserLastName = sale.User?.LastName
+            };
         }
     }
 
     // DTOS
     public record OrderCreateDto(string SKU, int Amount, decimal Cost);
     public record OrderUpdateDto(string SKU, int Amount, decimal Cost);
+    public record SaleCreateDto(string SKU, int Amount, decimal Income);
+    public record SaleUpdateDto(string SKU, int Amount, decimal Income);
     public record LoginDto(string UserName, string Password);
     public record LoginRequest(string UserName, string Password);
 }
