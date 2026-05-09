@@ -1,12 +1,29 @@
-/*
-  Inventory Management System - Frontend Logic
-  Matches the C# backend schema:
-    User (abstract) -> Admin, Staff
-    Product: SKU, Name, Manufacturer, Category, Quantity, ReorderLevel, Price
-    Order: OrderID, SKU, UserName, Amount, Cost
-    Sale: OrderID, SKU, UserName, Amount, Income
-    Adjustment: AdjustmentID, SKU, UserName, OldPrice, NewPrice, Reason
-*/
+const API_BASE = "http://localhost:5000/api";
+let authToken = localStorage.getItem("authToken"); // Persist login
+
+async function apiRequest(endpoint, options = {}) {
+    const token = localStorage.getItem("authToken");
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            ...(token && { "Authorization": `Bearer ${token}` }),
+            ...options.headers
+        }
+    });
+    
+    if (response.status === 401) {
+        logout(); // Auto-logout on auth failure
+        throw new Error("Unauthorized");
+    }
+    
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`API Error: ${response.status} - ${error}`);
+    }
+    
+    return response.json();
+}
 
 // ============================================================
 //  HELPERS
@@ -38,31 +55,27 @@ function formatMoney(n) {
 // ============================================================
 //  SEED DATA
 // ============================================================
-var products = [
-    { sku: makeSKU(), name: "Cold-Rolled Steel Sheet", manufacturer: "Nippon Steel", category: "RawMaterial", quantity: 1240, reorderLevel: 300, price: 18.75 },
-    { sku: makeSKU(), name: "Copper Wire 14AWG", manufacturer: "Southwire", category: "RawMaterial", quantity: 85, reorderLevel: 200, price: 6.30 },
-    { sku: makeSKU(), name: "Servo Motor SM-400", manufacturer: "SELF", category: "Finished", quantity: 44, reorderLevel: 20, price: 312.00 },
-    { sku: makeSKU(), name: "Silicone Gasket Ring", manufacturer: "Parker Hannifin", category: "RawMaterial", quantity: 6800, reorderLevel: 1500, price: 1.10 },
-    { sku: makeSKU(), name: "PCB Assembly Rev.7", manufacturer: "SELF", category: "Finished", quantity: 190, reorderLevel: 50, price: 67.50 },
-    { sku: makeSKU(), name: "Hydraulic Cylinder HC-20", manufacturer: "Bosch Rexroth", category: "Finished", quantity: 12, reorderLevel: 15, price: 489.00 },
-    { sku: makeSKU(), name: "Aluminum Extrusion 6061", manufacturer: "Alcoa", category: "RawMaterial", quantity: 520, reorderLevel: 150, price: 22.40 },
-    { sku: makeSKU(), name: "Power Supply Unit 24V", manufacturer: "SELF", category: "Finished", quantity: 78, reorderLevel: 25, price: 145.00 }
-];
-
-var users = [
-    { userName: "admin", firstName: "Diana", lastName: "Kovacs", password: "admin123", role: "Admin" },
-    { userName: "jwhitfield", firstName: "James", lastName: "Whitfield", password: "admin123", role: "Admin" },
-    { userName: "mobi", firstName: "Marcus", lastName: "Obi", password: "staff123", role: "Staff" },
-    { userName: "slindgren", firstName: "Sarah", lastName: "Lindgren", password: "staff123", role: "Staff" },
-    { userName: "pnair", firstName: "Priya", lastName: "Nair", password: "staff123", role: "Staff" }
-];
-
+var products = [];
+var users = [];
 var orders = [];
 var sales = [];
 var adjustments = [];
 var nextOrderId = 1;
 var nextSaleId = 1;
 var nextAdjustmentId = 1;
+
+async function loadInitialData() {
+    try {
+        // Load products
+        products = await apiRequest("/products");
+        renderProductTable();
+        renderDashboard();
+        
+    } catch (err) {
+        console.error("Failed to load data:", err);
+        showToast("Could not connect to backend");
+    }
+}
 
 
 // ============================================================
@@ -147,33 +160,38 @@ function showToast(message) {
 // ============================================================
 //  LOGIN
 // ============================================================
-function attemptLogin() {
+async function attemptLogin() {
     var username = document.getElementById("loginUsername").value.trim().toLowerCase();
     var password = document.getElementById("loginPassword").value;
     var errorBox = document.getElementById("loginError");
 
-    var foundUser = null;
-    for (var i = 0; i < users.length; i++) {
-        if (users[i].userName.toLowerCase() === username && users[i].password === password) {
-            foundUser = users[i];
-            break;
-        }
-    }
-
-    if (!foundUser) {
-        errorBox.textContent = "Invalid username or password";
+    try {
+        // POST credentials to backend
+        const userData = await apiRequest("/auth/login", {
+            method: "POST",
+            body: JSON.stringify({ userName: username, password: password })
+        });
+        
+        // Success: store user + token (for MVP, userData contains role directly)
+        loggedInUser = userData;
+        // authToken = userData.token; // Uncomment when using JWT
+        localStorage.setItem("authToken", authToken || "demo"); // MVP placeholder
+        
+        errorBox.classList.remove("visible");
+        document.getElementById("loginScreen").classList.add("hidden");
+        document.getElementById("loggedInName").textContent = userData.firstName + " " + userData.lastName;
+        document.getElementById("loggedInRole").textContent = userData.role.toUpperCase() + " · @" + userData.userName;
+        document.getElementById("loginPassword").value = "";
+        
+        logActivity("logged in");
+        showPage("dashboard");
+        loadInitialData(); // Refresh data after login
+        
+    } catch (err) {
+        errorBox.textContent = "Invalid credentials or server error";
         errorBox.classList.add("visible");
-        return;
+        console.error("Login failed:", err);
     }
-
-    errorBox.classList.remove("visible");
-    loggedInUser = foundUser;
-    document.getElementById("loginScreen").classList.add("hidden");
-    document.getElementById("loggedInName").textContent = foundUser.firstName + " " + foundUser.lastName;
-    document.getElementById("loggedInRole").textContent = foundUser.role.toUpperCase() + " · @" + foundUser.userName;
-    document.getElementById("loginPassword").value = "";
-    logActivity("logged in");
-    showPage("dashboard");
 }
 
 function logout() {
@@ -406,7 +424,8 @@ function closeProductModal() {
     document.getElementById("productOverlay").classList.remove("visible");
 }
 
-function saveProduct() {
+//REPLACED: Local array mutation -> API POST/PUT
+async function saveProduct() {
     var name = document.getElementById("inputName").value.trim();
     if (!name) { alert("Please enter a product name."); return; }
 
@@ -420,29 +439,60 @@ function saveProduct() {
         manufacturer: document.getElementById("inputManufacturer").value.trim() || "SELF"
     };
 
-    if (editingProductIndex === null) {
-        products.push(product);
-        showToast('Added "' + name + '"');
-        logActivity('added product "' + name + '"');
-    } else {
-        products[editingProductIndex] = product;
-        showToast('Updated "' + name + '"');
-        logActivity('updated product "' + name + '"');
+    try {
+        if (editingProductIndex === null) {
+            // CREATE: POST new product
+            const created = await apiRequest("/products", {
+                method: "POST",
+                body: JSON.stringify(product)
+            });
+            products.push(created); // Update local cache
+            showToast('Added "' + name + '"');
+            logActivity('added product "' + name + '"');
+        } else {
+            // UPDATE: PUT existing product
+            const updated = await apiRequest(`/products/${encodeURIComponent(product.sku)}`, {
+                method: "PUT",
+                body: JSON.stringify(product)
+            });
+            products[editingProductIndex] = updated;
+            showToast('Updated "' + name + '"');
+            logActivity('updated product "' + name + '"');
+        }
+        
+        closeProductModal();
+        renderProductTable();
+        if (currentPage === "dashboard") renderDashboard();
+        
+    } catch (err) {
+        console.error("Save failed:", err);
+        showToast("Failed to save product");
     }
-
-    closeProductModal();
-    renderProductTable();
 }
 
 function confirmDeleteProduct(index) {
     document.getElementById("confirmMessage").textContent = 'Remove "' + products[index].name + '" from inventory?';
     var productName = products[index].name;
-    pendingDeleteAction = function() {
+    pendingDeleteAction = async function() {
+    try {
+        const sku = products[index].sku;
+        // Call backend DELETE endpoint
+        await apiRequest(`/products/${encodeURIComponent(sku)}`, { 
+            method: "DELETE" 
+        });
+        
+        // Only update local state after successful API call
+        products.splice(index, 1);
         showToast('Removed "' + productName + '"');
         logActivity('removed product "' + productName + '"');
-        products.splice(index, 1);
         renderProductTable();
-    };
+        if (currentPage === "dashboard") renderDashboard();
+        
+    } catch (err) {
+        console.error("Delete failed:", err);
+        showToast("Failed to delete product");
+    }
+};
     document.getElementById("confirmOverlay").classList.add("visible");
 }
 
@@ -760,4 +810,11 @@ document.getElementById("confirmOverlay").addEventListener("click", function(e) 
 // ============================================================
 //  INIT
 // ============================================================
-renderActivityLog();
+document.addEventListener("DOMContentLoaded", async () => {
+    renderActivityLog();
+    
+    // If already logged in (persisted token), load data
+    if (loggedInUser) {
+        await loadInitialData();
+    }
+});
