@@ -20,6 +20,7 @@ namespace InventoryManagementSystem
         User CreateUser(string userName, string firstName, string lastName, string plainPass, UserRole role);
         Task<User?> GetUserAsync(string UserName);
         Task<bool> ValidateCredialsAsync(string userName, string plainPass);
+        Task EnsureDefaultAdminAsync(string defaultPassword);
     }
 
     public class UserService : IUserService{
@@ -71,7 +72,7 @@ namespace InventoryManagementSystem
             {
                 // Reuse existing Factory + Hashing logic
                 var admin = CreateUser(userName:"admin", firstName:"", lastName:"", plainPass:defaultPassword, role:UserRole.Admin);
-                Console.WriteLine($"🔐 Default admin '{admin.UserName}' created. Change password on first login.");
+                Console.WriteLine($"Default admin '{admin.UserName}' created. Change password on first login.");
             }
         }
     }

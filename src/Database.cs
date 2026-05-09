@@ -56,7 +56,7 @@ namespace InventoryManagementSystem
 
     public class Sale
     {
-        public int OrderID { get; set; }
+        public int SaleID { get; set; }
         public string SKU {get; set;} = string.Empty;
         public string UserName { get; set; } = string.Empty;
         public int Amount { get; set; }
@@ -86,18 +86,8 @@ namespace InventoryManagementSystem
     //the entire InventoryDbContext class is a facade for the many complex systems that go into an ORM. it makes it so much easier to interact with the database
     public class InventoryDbContext : DbContext
     {
-        private readonly string _dbPath;
-        public InventoryDbContext(string dbFilePath)
-        {
-            _dbPath = dbFilePath;
-            
-            // Ensure parent directory exists before EF tries to create the DB
-            var directory = Path.GetDirectoryName(Path.GetFullPath(dbFilePath));
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-        }
+        public InventoryDbContext(DbContextOptions<InventoryDbContext> options) 
+        : base(options) { }
         //these DbSet generics are examples ofg the iterator pattern, they're extremely useful for efficiently storing the results of queries
 
         public DbSet<User> Users { get; set; } = null!;
@@ -106,62 +96,66 @@ namespace InventoryManagementSystem
         public DbSet<Sale> Sales { get; set; } = null!;
         public DbSet<Adjustment> Adjustments { get; set; } = null!;
         
-        //the options builder and model builder are both examples of the builder pattern. 
-        //the modelbuilder uses it more but it shows how the builder pattern is really useful for making complex constructors
-        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-        {
-            optionsBuilder.UseSqlite($"Data Source={_dbPath}");
-        }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // Users PK
             modelBuilder.Entity<User>()
+                .HasKey(u => u.UserName);
+            modelBuilder.Entity<User>()
                 .HasDiscriminator<string>("PrivilegeLevel")
                     .HasValue<Admin>("Admin")
                     .HasValue<Staff>("Staff");
+            modelBuilder.Entity<User>()
+                .Property(u => u.UserName)
+                    .IsRequired()
+                    .HasMaxLength(50);
 
             // Products PK
-            modelBuilder.Entity<Product>().HasKey(p => p.SKU);
+            modelBuilder.Entity<Product>()
+                .HasKey(p => p.SKU);
 
             // Orders PK & FKs
-            modelBuilder.Entity<Order>().HasKey(o => o.OrderID);
+            modelBuilder.Entity<Order>()
+                .HasKey(o => o.OrderID);
             modelBuilder.Entity<Order>()
                 .HasOne(o => o.Product)
-                .WithMany()
-                .HasForeignKey(o => o.SKU)
-                .OnDelete(DeleteBehavior.Restrict);
+                    .WithMany()
+                    .HasForeignKey(o => o.SKU)
+                    .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<Order>()
                 .HasOne(o => o.User)
-                .WithMany()
-                .HasForeignKey(o => o.UserName)
-                .OnDelete(DeleteBehavior.Restrict);
+                    .WithMany()
+                    .HasForeignKey(o => o.UserName)
+                    .OnDelete(DeleteBehavior.Restrict);
 
             // Sales PK & FKs
-            modelBuilder.Entity<Sale>().HasKey(s => s.OrderID);
+            modelBuilder.Entity<Sale>()
+                .HasKey(s => s.SaleID);
             modelBuilder.Entity<Sale>()
                 .HasOne(s => s.Product)
-                .WithMany()
-                .HasForeignKey(s => s.SKU)
-                .OnDelete(DeleteBehavior.Restrict);
+                    .WithMany()
+                    .HasForeignKey(s => s.SKU)
+                    .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<Sale>()
                 .HasOne(s => s.User)
-                .WithMany()
-                .HasForeignKey(s => s.UserName)
-                .OnDelete(DeleteBehavior.Restrict);
+                    .WithMany()
+                    .HasForeignKey(s => s.UserName)
+                    .OnDelete(DeleteBehavior.Restrict);
 
             // Adjustments PK & FKs
-            modelBuilder.Entity<Adjustment>().HasKey(a => a.AdjustmentID);
+            modelBuilder.Entity<Adjustment>()
+                .HasKey(a => a.AdjustmentID);
             modelBuilder.Entity<Adjustment>()
                 .HasOne(a => a.Product)
-                .WithMany()
-                .HasForeignKey(a => a.SKU)
-                .OnDelete(DeleteBehavior.Restrict);
+                    .WithMany()
+                    .HasForeignKey(a => a.SKU)
+                    .OnDelete(DeleteBehavior.Restrict);
             modelBuilder.Entity<Adjustment>()
                 .HasOne(a => a.User)
-                .WithMany()
-                .HasForeignKey(a => a.UserName)
-                .OnDelete(DeleteBehavior.Restrict);
+                    .WithMany()
+                    .HasForeignKey(a => a.UserName)
+                    .OnDelete(DeleteBehavior.Restrict);
         }
 
         /// <summary>
