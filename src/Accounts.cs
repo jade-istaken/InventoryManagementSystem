@@ -60,7 +60,7 @@ namespace InventoryManagementSystem
         public async Task<bool> ValidateCredialsAsync(string userName, string plainPass)
         {
             var user = await GetUserAsync(userName);
-            return user != null && _hasher.Verify(user.HashedPass, plainPass);
+            return user != null && _hasher.Verify(plainPass, user.HashedPass);
         }
 
         public async Task EnsureDefaultAdminAsync(string defaultPassword = "ChangeMe123!")

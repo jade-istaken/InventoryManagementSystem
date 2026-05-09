@@ -255,7 +255,7 @@ namespace InventoryManagementSystem
 
 
             // Authentication API
-            app.MapPost("/api/auth/login", async (LoginDto credentials, UserService userService, HttpContext http) =>
+            app.MapPost("/api/auth/login", async (LoginDto credentials, IUserService userService, HttpContext http) =>
             {
                 if (await userService.ValidateCredialsAsync(credentials.UserName, credentials.Password))
                 {
