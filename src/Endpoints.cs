@@ -69,4 +69,97 @@ namespace InventoryManagementSystem
             });
         }
     }
+
+    public static class AdjustmentsEndpoints
+    {
+        public static void MapAdjustmentsEndpoints(this IEndpointRouteBuilder app)
+        {
+            app.MapGet("/api/adjustments", async (InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();
+                
+                var adjustments = await db.Adjustments
+                    .Include(a => a.Product)
+                    .Include(a => a.User)
+                    .OrderByDescending(a => a.AdjustmentID)
+                    .ToListAsync();
+                
+                return Results.Ok(adjustments.Select(DtoMappers.MapAdjustmentToDto));
+            });
+
+            // POST /api/adjustments - Record a price adjustment (Admin only)
+            app.MapPost("/api/adjustments", async (AdjustmentCreateDto dto, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();  // Price changes = admin-only
+                
+                // Validate product exists
+                var product = await db.Products.FindAsync(dto.SKU);
+                if (product == null)
+                    return Results.BadRequest(new { error = "Product not found" });
+                
+                // Validate input
+                if (dto.NewPrice < 0)
+                    return Results.BadRequest(new { error = "Price cannot be negative" });
+                if (string.IsNullOrWhiteSpace(dto.Reason))
+                    return Results.BadRequest(new { error = "Reason is required" });
+                
+                // Create adjustment record
+                var adjustment = new Adjustment
+                {
+                    SKU = dto.SKU,
+                    UserName = user.UserName,
+                    OldPrice = product.Price,      // Capture price BEFORE change
+                    NewPrice = dto.NewPrice,
+                    Reason = dto.Reason.Trim(),
+                    CreatedAt = DateTime.UtcNow 
+                };
+                
+                //Update the product's actual price
+                product.Price = dto.NewPrice;
+                
+                db.Adjustments.Add(adjustment);
+                await db.SaveChangesAsync();
+                
+                Console.WriteLine($"rice adjustment: {product.Name} ${product.Price} → ${dto.NewPrice} ({dto.Reason})");
+                return Results.Created($"/api/adjustments/{adjustment.AdjustmentID}", DtoMappers.MapAdjustmentToDto(adjustment));
+            });
+
+            // GET /api/adjustments/product/{sku} - Get adjustments for a specific product
+            app.MapGet("/api/adjustments/product/{sku}", async (string sku, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                
+                var adjustments = await db.Adjustments
+                    .Include(a => a.Product)
+                    .Include(a => a.User)
+                    .Where(a => a.SKU == sku)
+                    .OrderByDescending(a => a.AdjustmentID)
+                    .ToListAsync();
+                
+                return Results.Ok(adjustments.Select(DtoMappers.MapAdjustmentToDto));
+            });
+
+            // DELETE /api/adjustments/{id} - Delete an adjustment record (Admin only)
+            // Note: Does NOT revert the product price - adjustments are audit trail
+            app.MapDelete("/api/adjustments/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
+            {
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                if (user is not Admin) return Results.Forbid();
+                
+                var adjustment = await db.Adjustments.FindAsync(id);
+                if (adjustment == null) return Results.NotFound();
+                
+                db.Adjustments.Remove(adjustment);
+                await db.SaveChangesAsync();
+                
+                return Results.NoContent();
+            });
+        }
+    }
 }
