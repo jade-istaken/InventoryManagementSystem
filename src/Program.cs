@@ -57,9 +57,9 @@ namespace InventoryManagementSystem
                 var context = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
                 context.InitializeDatabase();
                 
-                var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
-                await userService.EnsureDefaultAdminAsync("admin123");
-                
+                var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+                var seeder = new DemoDataSeeder(context, hasher);
+                await seeder.SeedAsync();         
             }
 
             Console.WriteLine("API running at http://localhost:5000");
