@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
+using System.IdentityModel.Tokens.Jwt;
 
 namespace InventoryManagementSystem
 {
@@ -724,6 +725,89 @@ namespace InventoryManagementSystem
                 
                 Console.WriteLine($"Returned {allActivity.Count} activity items");
                 return Results.Ok(allActivity);
+            });
+        }
+    }
+    public static class AuthEndpoints
+    {
+        public static void MapAuthEndpoins(this IEndpointRouteBuilder app)
+        {
+            app.MapPost("/api/auth/login", async (LoginDto credentials, IUserService userService, HttpContext http) =>
+            {
+                if (await userService.ValidateCredialsAsync(credentials.UserName, credentials.Password))
+                {
+                    var user = await userService.GetUserAsync(credentials.UserName);
+                    if (user != null)
+                    {
+                        var token = JwtHelper.GenerateToken(user);
+                        return Results.Ok(new 
+                        { 
+                            token = token,
+                            role = user is Admin ? "Admin" : "Staff",
+                            userName = user.UserName,                   
+                            firstName = user.FirstName,                 
+                            lastName = user.LastName                    
+                        });
+                    }
+                }
+                return Results.Unauthorized();
+            });
+        }
+    }
+    public static class DebugEndpoints
+    {
+        public static void MapDebugEndpoints(this IEndpointRouteBuilder app)
+        {
+            // Health check
+            app.MapGet("/api/health", () => new { status = "ok", timestamp = DateTime.UtcNow });
+            // Temporary debug endpoint to know that bcrypt is working right
+            app.MapPost("/api/test-bcrypt", (IPasswordHasher hasher) =>
+            {
+                const string pwd = "Test123!";
+                try 
+                {
+                    var hash = hasher.Hash(pwd);
+                    var valid = hasher.Verify(pwd, hash);
+                    var invalid = hasher.Verify("Wrong", hash);
+                    
+                    return Results.Json(new {
+                        hash = hash,
+                        length = hash?.Length,
+                        prefix = hash?.Substring(0, 4),
+                        verifyCorrect = valid,
+                        verifyWrong = !invalid,
+                        success = valid && !invalid && hash?.Length == 60
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Results.Problem($"Error: {ex.GetType().Name} - {ex.Message}");
+                }
+            });
+
+            // debug how token validation works
+            app.MapGet("/api/debug/validate", (HttpContext http) =>
+            {
+                var auth = http.Request.Headers["Authorization"].FirstOrDefault();
+                if (string.IsNullOrEmpty(auth) || !auth.StartsWith("Bearer "))
+                    return Results.Ok(new { error = "No Bearer token" });
+                
+                var token = auth["Bearer ".Length..].Trim();
+                var handler = new JwtSecurityTokenHandler();
+                
+                try 
+                {
+                    var jwt = handler.ReadJwtToken(token);  // Decode only
+                    return Results.Ok(new { 
+                        decoded = true,
+                        algorithm = jwt.Header.Alg,  // ← See what algorithm the token claims
+                        claims = jwt.Claims.Select(c => new { c.Type, c.Value })
+                    });
+                }
+                catch (Exception ex)
+                {
+                    return Results.Ok(new { decoded = false, error = ex.Message });
+                }
             });
         }
     }
