@@ -644,4 +644,87 @@ namespace InventoryManagementSystem
             });
         }
     }
+    public static class ActivityEndpoints
+    {
+        public static void MapActivityEndpoints(this IEndpointRouteBuilder app)
+        {
+            app.MapGet("/api/activity", async (
+                InventoryDbContext db, 
+                HttpContext http, 
+                int limit = 50,
+                string? type = null) =>
+            {
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
+                if (user == null) return Results.Unauthorized();
+                
+                // MVP: Only Admins can view full activity feed
+                if (user is not Admin) return Results.Forbid();
+                
+                    Console.WriteLine($"Fetching activity: limit={limit}, type={type ?? "all"}");
+    
+                // Initialize result lists
+                var recentOrders = new List<Order>();
+                var recentSales = new List<Sale>();
+                var recentAdjustments = new List<Adjustment>();
+                
+                // Fetch only the requested type(s) to save DB calls
+                if (string.IsNullOrWhiteSpace(type) || type.Equals("order", StringComparison.OrdinalIgnoreCase))
+                {
+                    recentOrders = await db.Orders
+                        .Include(o => o.Product).Include(o => o.User)
+                        .OrderByDescending(o => o.CreatedAt)
+                        .Take(limit)
+                        .ToListAsync();
+                }
+                
+                if (string.IsNullOrWhiteSpace(type) || type.Equals("sale", StringComparison.OrdinalIgnoreCase))
+                {
+                    recentSales = await db.Sales
+                        .Include(s => s.Product).Include(s => s.User)
+                        .OrderByDescending(s => s.CreatedAt)
+                        .Take(limit)
+                        .ToListAsync();
+                }
+                
+                if (string.IsNullOrWhiteSpace(type) || type.Equals("adjustment", StringComparison.OrdinalIgnoreCase))
+                {
+                    recentAdjustments = await db.Adjustments
+                        .Include(a => a.Product).Include(a => a.User)
+                        .OrderByDescending(a => a.CreatedAt)
+                        .Take(limit)
+                        .ToListAsync();
+                }
+                
+                // Map to unified ActivityItem format
+                var orderItems = recentOrders.Select(o => new ActivityItem(
+                    "order", o.OrderID, o.SKU, o.Product?.Name ?? "", o.UserName,
+                    string.IsNullOrWhiteSpace(o.User?.FirstName) ? o.UserName : $"{o.User.FirstName} {o.User.LastName}".Trim(),
+                    o.Amount, o.Cost, o.CreatedAt, ""
+                ));
+                
+                var saleItems = recentSales.Select(s => new ActivityItem(
+                    "sale", s.SaleID, s.SKU, s.Product?.Name ?? "", s.UserName,
+                    string.IsNullOrWhiteSpace(s.User?.FirstName) ? s.UserName : $"{s.User.FirstName} {s.User.LastName}".Trim(),
+                    s.Amount, s.Income, s.CreatedAt, ""
+                ));
+                
+                var adjustmentItems = recentAdjustments.Select(a => new ActivityItem(
+                    "adjustment", a.AdjustmentID, a.SKU, a.Product?.Name ?? "", a.UserName,
+                    string.IsNullOrWhiteSpace(a.User?.FirstName) ? a.UserName : $"{a.User.FirstName} {a.User.LastName}".Trim(),
+                    a.NewPrice - a.OldPrice, a.NewPrice, a.CreatedAt, a.Reason ?? ""
+                ));
+                
+                // Merge all sources, sort by timestamp (true chronological order), apply final limit
+                var allActivity = orderItems
+                    .Concat(saleItems)
+                    .Concat(adjustmentItems)
+                    .OrderByDescending(a => a.Timestamp)
+                    .Take(limit)
+                    .ToList();
+                
+                Console.WriteLine($"Returned {allActivity.Count} activity items");
+                return Results.Ok(allActivity);
+            });
+        }
+    }
 }
