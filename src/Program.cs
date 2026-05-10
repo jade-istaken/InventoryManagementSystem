@@ -9,6 +9,8 @@ using System.Text;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Routing;
+using InventoryManagementSystem.Helpers;
+using InventoryManagementSystem.Extensions;
 
 namespace InventoryManagementSystem
 {
@@ -25,60 +27,7 @@ namespace InventoryManagementSystem
 
             // === SERVICES ===
             var dbPath = Path.Combine(AppContext.BaseDirectory, "inventory.db");
-
-            builder.Services.AddDbContext<InventoryDbContext>(options =>
-                options.UseSqlite($"Data Source={dbPath}"));
-            
-            builder.Services.AddScoped<IUserService, UserService>();
-            builder.Services.AddScoped<IPasswordHasher, BcryptHasher>();         
-            builder.Services.AddControllers(); //  Enable API controllers
-            builder.Services.AddCors(options =>
-                options.AddDefaultPolicy(policy =>
-                    policy.WithOrigins(
-                        "http://localhost:3000", 
-                        "http://127.0.0.1:3000",
-                        "http://localhost:5000",
-                        "http://127.0.0.1:5000"
-                        )
-                          .AllowAnyMethod()
-                          .AllowAnyHeader())); //  Allow frontend origin
-
-            builder.Services.AddAuthentication("Bearer")
-                .AddJwtBearer("Bearer", options =>
-                {
-                    var validationKey = new SymmetricSecurityKey(
-                    Encoding.ASCII.GetBytes(JwtHelper.SecretKey))
-                {
-                    KeyId = "MVP-Symmetric-Key-2026"  // MUST MATCH JwtHelper exactly
-                };
-
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = validationKey,  //  Use the key with KeyId
-                    ValidateIssuer = false,
-                    ValidateAudience = false,
-                    NameClaimType = ClaimTypes.Name,
-                    RoleClaimType = ClaimTypes.Role,
-                    ValidateLifetime = false,          // Skip expiration for MVP
-                    ClockSkew = TimeSpan.FromMinutes(5),
-                    RequireSignedTokens = true         // Keep validation, but KeyId fixes the issue
-                };
-                });
-            builder.Services.AddAuthorization();
-
-            builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
-            {
-                options.SerializerOptions.PropertyNameCaseInsensitive = true;
-                options.SerializerOptions.Converters.Add(
-                    new System.Text.Json.Serialization.JsonStringEnumConverter());
-            });
-            builder.Services.AddControllers()
-                .AddJsonOptions(options =>
-                {
-                    options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-                    options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-                });
+            builder.Services.AddAppServices(dbPath);            
 
             var app = builder.Build();
 
@@ -155,7 +104,7 @@ namespace InventoryManagementSystem
             // GET /api/orders - List all orders (Admin only)
             app.MapGet("/api/orders", async (InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -164,14 +113,14 @@ namespace InventoryManagementSystem
                     .Include(o => o.User)
                     .ToListAsync();
                 
-                return Results.Ok(orders.Select(MapOrderToDto));
+                return Results.Ok(orders.Select(DtoMappers.MapOrderToDto));
             })
             ;
 
             // GET /api/orders/{id} - Get single order
             app.MapGet("/api/orders/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 
                 var order = await db.Orders
@@ -185,13 +134,13 @@ namespace InventoryManagementSystem
                 if (user is not Admin && order.UserName != user.UserName)
                     return Results.Forbid();
                 
-                return Results.Ok(MapOrderToDto(order));
+                return Results.Ok(DtoMappers.MapOrderToDto(order));
             })
             ;
 
             app.MapPost("/api/orders", async (OrderCreateDto dto, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
 
                 //check if the product actually exists
@@ -221,14 +170,14 @@ namespace InventoryManagementSystem
                 db.Orders.Add(order);
                 await db.SaveChangesAsync();
 
-                return Results.Created($"/api/orders/{order.OrderID}", MapOrderToDto(order));
+                return Results.Created($"/api/orders/{order.OrderID}", DtoMappers.MapOrderToDto(order));
             });
 
 
             // PUT /api/orders/{id} - Update order
             app.MapPut("/api/orders/{id:int}", async (int id, OrderUpdateDto dto, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -251,13 +200,13 @@ namespace InventoryManagementSystem
                 
                 await db.SaveChangesAsync();
                 
-                return Results.Ok(MapOrderToDto(order));
+                return Results.Ok(DtoMappers.MapOrderToDto(order));
             });
 
             // DELETE /api/orders/{id} - Delete order (Admin only)
             app.MapDelete("/api/orders/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -282,7 +231,7 @@ namespace InventoryManagementSystem
             // GET /api/orders/user/{userName} - Get orders by user
             app.MapGet("/api/orders/user/{userName}", async (string userName, InventoryDbContext db, HttpContext http) =>
             {
-                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                var requestingUser = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (requestingUser == null) return Results.Unauthorized();
                 
                 // Users can only view their own orders unless admin
@@ -295,7 +244,7 @@ namespace InventoryManagementSystem
                     .Where(o => o.UserName == userName)
                     .ToListAsync();
                 
-                return Results.Ok(orders.Select(MapOrderToDto));
+                return Results.Ok(orders.Select(DtoMappers.MapOrderToDto));
             });
 
             //Sales API
@@ -303,7 +252,7 @@ namespace InventoryManagementSystem
             // GET /api/sales - List all sales (Admin only)
             app.MapGet("/api/sales", async (InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -311,13 +260,13 @@ namespace InventoryManagementSystem
                     .Include(s => s.Product)
                     .Include(s => s.User)
                     .ToListAsync();
-                return Results.Ok(sales.Select(MapSaleToDto));
+                return Results.Ok(sales.Select(DtoMappers.MapSaleToDto));
             });
 
             // GET /api/sales/{id} - Get single sale
             app.MapGet("/api/sales/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 
                 var sale = await db.Sales
@@ -330,13 +279,13 @@ namespace InventoryManagementSystem
                 if (user is not Admin && sale.UserName != user.UserName)
                     return Results.Forbid();
                 
-                return Results.Ok(MapSaleToDto(sale));
+                return Results.Ok(DtoMappers.MapSaleToDto(sale));
             });
 
             // POST /api/sales - Create a new sale (Admin or Staff)
             app.MapPost("/api/sales", async (SaleCreateDto dto, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 
                 // Validate product exists
@@ -374,13 +323,13 @@ namespace InventoryManagementSystem
                 db.Sales.Add(sale);
                 await db.SaveChangesAsync();
                 
-                return Results.Created($"/api/sales/{sale.SaleID}", MapSaleToDto(sale));
+                return Results.Created($"/api/sales/{sale.SaleID}", DtoMappers.MapSaleToDto(sale));
             });
 
             // PUT /api/sales/{id} - Update sale (Admin only)
             app.MapPut("/api/sales/{id:int}", async (int id, SaleUpdateDto dto, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -405,13 +354,13 @@ namespace InventoryManagementSystem
                 sale.Income = dto.Income;
                 
                 await db.SaveChangesAsync();
-                return Results.Ok(MapSaleToDto(sale));
+                return Results.Ok(DtoMappers.MapSaleToDto(sale));
             });
 
             // DELETE /api/sales/{id} - Delete sale (Admin only)
             app.MapDelete("/api/sales/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -434,7 +383,7 @@ namespace InventoryManagementSystem
             // GET /api/sales/user/{userName} - Get sales by user
             app.MapGet("/api/sales/user/{userName}", async (string userName, InventoryDbContext db, HttpContext http) =>
             {
-                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                var requestingUser = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (requestingUser == null) return Results.Unauthorized();
                 
                 // Users can only view their own sales unless admin
@@ -446,13 +395,13 @@ namespace InventoryManagementSystem
                     .Include(s => s.User)
                     .Where(s => s.UserName == userName)
                     .ToListAsync();
-                return Results.Ok(sales.Select(MapSaleToDto));
+                return Results.Ok(sales.Select(DtoMappers.MapSaleToDto));
             });
 
             // Adjustments API
             app.MapGet("/api/adjustments", async (InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -462,13 +411,13 @@ namespace InventoryManagementSystem
                     .OrderByDescending(a => a.AdjustmentID)
                     .ToListAsync();
                 
-                return Results.Ok(adjustments.Select(MapAdjustmentToDto));
+                return Results.Ok(adjustments.Select(DtoMappers.MapAdjustmentToDto));
             });
 
             // POST /api/adjustments - Record a price adjustment (Admin only)
             app.MapPost("/api/adjustments", async (AdjustmentCreateDto dto, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();  // Price changes = admin-only
                 
@@ -501,13 +450,13 @@ namespace InventoryManagementSystem
                 await db.SaveChangesAsync();
                 
                 Console.WriteLine($"rice adjustment: {product.Name} ${product.Price} → ${dto.NewPrice} ({dto.Reason})");
-                return Results.Created($"/api/adjustments/{adjustment.AdjustmentID}", MapAdjustmentToDto(adjustment));
+                return Results.Created($"/api/adjustments/{adjustment.AdjustmentID}", DtoMappers.MapAdjustmentToDto(adjustment));
             });
 
             // GET /api/adjustments/product/{sku} - Get adjustments for a specific product
             app.MapGet("/api/adjustments/product/{sku}", async (string sku, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 
                 var adjustments = await db.Adjustments
@@ -517,14 +466,14 @@ namespace InventoryManagementSystem
                     .OrderByDescending(a => a.AdjustmentID)
                     .ToListAsync();
                 
-                return Results.Ok(adjustments.Select(MapAdjustmentToDto));
+                return Results.Ok(adjustments.Select(DtoMappers.MapAdjustmentToDto));
             });
 
             // DELETE /api/adjustments/{id} - Delete an adjustment record (Admin only)
             // Note: Does NOT revert the product price - adjustments are audit trail
             app.MapDelete("/api/adjustments/{id:int}", async (int id, InventoryDbContext db, HttpContext http) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 if (user is not Admin) return Results.Forbid();
                 
@@ -544,7 +493,7 @@ namespace InventoryManagementSystem
                 int limit = 50,
                 string? type = null) =>
             {
-                var user = await GetAuthenticatedUserAsync(http, db);
+                var user = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (user == null) return Results.Unauthorized();
                 
                 // MVP: Only Admins can view full activity feed
@@ -619,7 +568,7 @@ namespace InventoryManagementSystem
             //User APIs
             app.MapGet("/api/users", async (InventoryDbContext db, HttpContext http) =>
             {
-                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                var requestingUser = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (requestingUser == null) return Results.Unauthorized();
                 if (requestingUser is not Admin) return Results.Forbid();
                 
@@ -642,7 +591,7 @@ namespace InventoryManagementSystem
                 InventoryDbContext db, 
                 HttpContext http) =>
             {
-                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                var requestingUser = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (requestingUser == null) return Results.Unauthorized();
                 if (requestingUser is not Admin) return Results.Forbid();
                 
@@ -690,7 +639,7 @@ namespace InventoryManagementSystem
                 await db.SaveChangesAsync();
                 
                 Console.WriteLine($"👤 User created: {newUser.UserName} ({dto.Role})");
-                return Results.Created($"/api/users/{newUser.UserName}", MapUserToDto(newUser));
+                return Results.Created($"/api/users/{newUser.UserName}", DtoMappers.MapUserToDto(newUser));
             });
 
             app.MapPut("/api/users/{userName}", async (
@@ -700,7 +649,7 @@ namespace InventoryManagementSystem
                 InventoryDbContext db, 
                 HttpContext http) =>
             {
-                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                var requestingUser = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (requestingUser == null) return Results.Unauthorized();
                 if (requestingUser is not Admin) return Results.Forbid();
                 
@@ -762,7 +711,7 @@ namespace InventoryManagementSystem
                 }
                 
                 await db.SaveChangesAsync();
-                return Results.Ok(MapUserToDto(user));
+                return Results.Ok(DtoMappers.MapUserToDto(user));
             });
 
             // DELETE /api/users/{userName} - Delete user (Admin only)
@@ -771,7 +720,7 @@ namespace InventoryManagementSystem
                 InventoryDbContext db, 
                 HttpContext http) =>
             {
-                var requestingUser = await GetAuthenticatedUserAsync(http, db);
+                var requestingUser = await AuthHelper.GetAuthenticatedUserAsync(http, db);
                 if (requestingUser == null) return Results.Unauthorized();
                 if (requestingUser is not Admin) return Results.Forbid();
                 
@@ -877,88 +826,7 @@ namespace InventoryManagementSystem
 
             Console.WriteLine("API running at http://localhost:5000");
             Console.WriteLine("Frontend served at http://localhost:5000/");
-            app.Run(); // ← Keep server alive!
-
-            // funny little helper functions
-            async Task<User?> GetAuthenticatedUserAsync(HttpContext http, InventoryDbContext db)
-            {
-                var authHeader = http.Request.Headers["Authorization"].FirstOrDefault();
-                if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
-                    return null;
-                
-                var token = authHeader["Bearer ".Length..].Trim();
-                try
-                {
-                    var handler = new JwtSecurityTokenHandler();
-                    var jwtToken = handler.ReadJwtToken(token);
-                    var userName = jwtToken.Claims.FirstOrDefault(c => 
-                        c.Type == "unique_name" ||        // JWT short form
-                        c.Type == ClaimTypes.Name         // .NET long form fallback
-                    )?.Value;
-                    Console.WriteLine($"Auth: Extracted userName='{userName}' from token");
-
-                    if (userName == null)
-                    {
-                        Console.WriteLine("Auth: userName claim not found in token");
-                        return null;
-                    }
-
-                    var user = await db.Users.FindAsync(userName);
-                    Console.WriteLine($"Auth: Found user in DB: {user != null}");
-                    return user;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Auth: Exception decoding token: {ex.GetType().Name} - {ex.Message}");
-                    return null;
-                }
-            }
-
-            object MapOrderToDto(Order order) => new
-            {
-                order.OrderID,
-                order.SKU,
-                order.UserName,
-                order.Amount,
-                order.Cost,
-                createdAt = order.CreatedAt,
-                ProductName = order.Product?.Name,
-                UserFirstName = order.User?.FirstName,
-                UserLastName = order.User?.LastName
-            };
-
-            object MapSaleToDto(Sale sale) => new
-            {
-                orderId = sale.SaleID,
-                sku = sale.SKU,
-                userName = sale.UserName,
-                amount = sale.Amount,
-                income = sale.Income,
-                createdAt = sale.CreatedAt,
-                ProductName = sale.Product?.Name,
-                UserFirstName = sale.User?.FirstName,
-                UserLastName = sale.User?.LastName
-            };
-
-            AdjustmentDto MapAdjustmentToDto(Adjustment adj) => new(
-                adj.AdjustmentID,
-                adj.SKU,
-                adj.UserName,
-                adj.OldPrice,
-                adj.NewPrice,
-                adj.Reason,
-                adj.CreatedAt, 
-                adj.Product?.Name ?? "",
-                adj.User?.FirstName ?? "",
-                adj.User?.LastName ?? ""
-            );
-
-            UserDto MapUserToDto(User user) => new(
-                user.UserName,
-                user.FirstName,
-                user.LastName,
-                user is Admin ? "Admin" : "Staff"
-            );
+            app.Run(); // Keep server alive!
         }
     }
 }
