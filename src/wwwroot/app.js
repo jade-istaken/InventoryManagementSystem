@@ -662,7 +662,7 @@ async function saveProduct() {
             logActivity('added product "' + name + '"');
         } else {
             // UPDATE: PUT existing product
-            const updated = await apiRequest(`/products/${encodeURIComponent(product.sku)}`, {
+            const updated = await apiRequest(`/products/${(product.SKU)}`, {
                 method: "PUT",
                 body: JSON.stringify(product)
             });
