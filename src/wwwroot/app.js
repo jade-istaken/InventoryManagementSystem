@@ -143,6 +143,69 @@ var loggedInUser = null;
 var activityLog = [];
 var toastTimer = null;
 
+// polling for cleaner updates and across-session syncing
+let syncInterval = null;
+let isSyncing = false;
+
+async function fetchFreshData() {
+    try {
+        const freshProducts = await apiRequest("/products");
+        if (freshProducts) products = freshProducts;
+
+        if (loggedInUser?.role === "Admin") {
+            const [o, s, a, u] = await Promise.all([
+                apiRequest("/orders").catch(() => []),
+                apiRequest("/sales").catch(() => []),
+                apiRequest("/adjustments").catch(() => []),
+                apiRequest("/users").catch(() => [])
+            ]);
+            if (o) orders = o;
+            if (s) sales = s;
+            if (a) adjustments = a;
+            if (u) users = u;
+        }
+        return true;
+    } catch (e) {
+        console.warn("Background fetch failed:", e);
+        return false;
+    }
+}
+
+function startBackgroundSync(intervalMs = 4000) {
+    if (syncInterval) return;
+    syncInterval = setInterval(async () => {
+        if (isSyncing || !loggedInUser || document.hidden) return;
+        isSyncing = true;
+
+        try {
+            const updated = await fetchFreshData();
+            if (updated) {
+                // Re-render only the visible page
+                switch (currentPage) {
+                    case "dashboard": renderDashboard(); break;
+                    case "products": renderProductTable(); break;
+                    case "transactions": renderTransactionsPage(); break;
+                    case "users": renderUserCards(); break;
+                }
+
+                // Refresh activity panel if it's expanded
+                const panel = document.getElementById("activityPanel");
+                if (panel && !panel.classList.contains("collapsed")) {
+                    loadActivityLog(20);
+                }
+            }
+        } finally {
+            isSyncing = false;
+        }
+    }, intervalMs);
+}
+
+function stopBackgroundSync() {
+    if (syncInterval) {
+        clearInterval(syncInterval);
+        syncInterval = null;
+    }
+}
 
 // ============================================================
 //  PERMISSIONS (mirrors C# User methods)
@@ -200,7 +263,7 @@ function renderActivityLog(items) {
     
     // Build HTML for each activity item
     const html = items.map(item => {
-        // ✅ Use camelCase properties from JSON API:
+        // Use camelCase properties from JSON API:
         const type = item.type;           // "order", "sale", or "adjustment"
         const product = item.productName || item.sku || "(unknown)";
         const user = item.userDisplayName || item.userName || "system";
@@ -332,6 +395,7 @@ async function attemptLogin() {
             await loadActivityLog(20);
         }
         showToast(`Welcome, ${loggedInUser.firstName}!`);
+        startBackgroundSync(4000); // start sync poll
         
     } catch (err) {
         errorBox.textContent = "Invalid credentials or server error";
@@ -341,6 +405,7 @@ async function attemptLogin() {
 }
 
 function logout() {
+    stopBackgroundSync() // get rid of the extra resource usage
     logActivity("logged out");
     loggedInUser = null;
     document.getElementById("loginScreen").classList.remove("hidden");
@@ -671,7 +736,7 @@ function closeTransactionModal() {
     document.getElementById("transactionOverlay").classList.remove("visible");
 }
 
-// REPLACE the entire saveTransaction() function with this async version:
+//async version of previous function:
 async function saveTransaction() {
   var amount = parseInt(document.getElementById("transactionAmount").value);
   var price = parseFloat(document.getElementById("transactionPrice").value);
